@@ -1,0 +1,28 @@
+# PlatformIO
+.pio/
+.pioenvs/
+.piolibdeps/
+
+# Editor & IDE artifacts
+.vscode/
+.idea/
+*.swp
+*~
+~$*
+
+# Build outputs
+*.bin
+*.elf
+*.hex
+*.exe
+*.o
+*.obj
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Logs & temp
+*.log
+scratch/

@@ -1,0 +1,74 @@
+{
+  "version": 1,
+  "author": "Antigravity Engineering",
+  "editor": "wokwi",
+  "parts": [
+    { "type": "wokwi-esp32-devkit-v1", "id": "esp", "top": 120, "left": 200, "attrs": {} },
+    { "type": "wokwi-led", "id": "led_ok", "top": -40, "left": 160, "attrs": { "color": "green", "label": "SYS_OK" } },
+    { "type": "wokwi-resistor", "id": "r_ok", "top": 20, "left": 160, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led_bio_mis", "top": -40, "left": 220, "attrs": { "color": "red", "label": "BIO_MIS" } },
+    { "type": "wokwi-resistor", "id": "r_bio_mis", "top": 20, "left": 220, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led_nonbio_mis", "top": -40, "left": 280, "attrs": { "color": "red", "label": "NBIO_MIS" } },
+    { "type": "wokwi-resistor", "id": "r_nonbio_mis", "top": 20, "left": 280, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led_full", "top": -40, "left": 340, "attrs": { "color": "yellow", "label": "BIN_FULL" } },
+    { "type": "wokwi-resistor", "id": "r_full", "top": 20, "left": 340, "attrs": { "value": "220" } },
+    { "type": "wokwi-led", "id": "led_fault", "top": -40, "left": 400, "attrs": { "color": "red", "label": "FAULT" } },
+    { "type": "wokwi-resistor", "id": "r_fault", "top": 20, "left": 400, "attrs": { "value": "220" } },
+    { "type": "wokwi-potentiometer", "id": "pot_gas", "top": 60, "left": -80, "attrs": { "label": "MQ Gas (GPIO36)" } },
+    { "type": "wokwi-potentiometer", "id": "pot_bio_moist", "top": 180, "left": -80, "attrs": { "label": "Bio Moist (GPIO39)" } },
+    { "type": "wokwi-potentiometer", "id": "pot_nonbio_moist", "top": 300, "left": -80, "attrs": { "label": "NB Moist (GPIO34)" } },
+    { "type": "wokwi-pushbutton", "id": "btn_bio_metal", "top": 420, "left": 160, "attrs": { "color": "grey", "label": "Bio Metal (GPIO18)" } },
+    { "type": "wokwi-pushbutton", "id": "btn_nonbio_metal", "top": 420, "left": 280, "attrs": { "color": "grey", "label": "NB Metal (GPIO19)" } },
+    { "type": "wokwi-hc-sr04", "id": "ultra_bio", "top": 120, "left": 540, "attrs": { "label": "Bio Fill HC-SR04" } },
+    { "type": "wokwi-hc-sr04", "id": "ultra_nonbio", "top": 280, "left": 540, "attrs": { "label": "NB Fill HC-SR04" } }
+  ],
+  "connections": [
+    [ "esp:GND.1", "r_ok:1", "black", [ "v0" ] ],
+    [ "r_ok:2", "led_ok:C", "black", [ "v0" ] ],
+    [ "esp:D2", "led_ok:A", "green", [ "v0" ] ],
+
+    [ "esp:GND.1", "r_bio_mis:1", "black", [ "v0" ] ],
+    [ "r_bio_mis:2", "led_bio_mis:C", "black", [ "v0" ] ],
+    [ "esp:D13", "led_bio_mis:A", "red", [ "v0" ] ],
+
+    [ "esp:GND.1", "r_nonbio_mis:1", "black", [ "v0" ] ],
+    [ "r_nonbio_mis:2", "led_nonbio_mis:C", "black", [ "v0" ] ],
+    [ "esp:D15", "led_nonbio_mis:A", "red", [ "v0" ] ],
+
+    [ "esp:GND.1", "r_full:1", "black", [ "v0" ] ],
+    [ "r_full:2", "led_full:C", "black", [ "v0" ] ],
+    [ "esp:D33", "led_full:A", "gold", [ "v0" ] ],
+
+    [ "esp:GND.1", "r_fault:1", "black", [ "v0" ] ],
+    [ "r_fault:2", "led_fault:C", "black", [ "v0" ] ],
+    [ "esp:D32", "led_fault:A", "orange", [ "v0" ] ],
+
+    [ "esp:3V3", "pot_gas:VCC", "red", [ "v0" ] ],
+    [ "esp:GND.1", "pot_gas:GND", "black", [ "v0" ] ],
+    [ "pot_gas:SIG", "esp:VP", "purple", [ "v0" ] ],
+
+    [ "esp:3V3", "pot_bio_moist:VCC", "red", [ "v0" ] ],
+    [ "esp:GND.1", "pot_bio_moist:GND", "black", [ "v0" ] ],
+    [ "pot_bio_moist:SIG", "esp:VN", "blue", [ "v0" ] ],
+
+    [ "esp:3V3", "pot_nonbio_moist:VCC", "red", [ "v0" ] ],
+    [ "esp:GND.1", "pot_nonbio_moist:GND", "black", [ "v0" ] ],
+    [ "pot_nonbio_moist:SIG", "esp:D34", "cyan", [ "v0" ] ],
+
+    [ "esp:GND.2", "btn_bio_metal:1.l", "black", [ "v0" ] ],
+    [ "btn_bio_metal:2.l", "esp:D18", "gray", [ "v0" ] ],
+
+    [ "esp:GND.2", "btn_nonbio_metal:1.l", "black", [ "v0" ] ],
+    [ "btn_nonbio_metal:2.l", "esp:D19", "gray", [ "v0" ] ],
+
+    [ "esp:VIN", "ultra_bio:VCC", "red", [ "v0" ] ],
+    [ "esp:GND.2", "ultra_bio:GND", "black", [ "v0" ] ],
+    [ "esp:D26", "ultra_bio:TRIG", "green", [ "v0" ] ],
+    [ "ultra_bio:ECHO", "esp:D25", "blue", [ "v0" ] ],
+
+    [ "esp:VIN", "ultra_nonbio:VCC", "red", [ "v0" ] ],
+    [ "esp:GND.2", "ultra_nonbio:GND", "black", [ "v0" ] ],
+    [ "esp:D27", "ultra_nonbio:TRIG", "green", [ "v0" ] ],
+    [ "ultra_nonbio:ECHO", "esp:D14", "blue", [ "v0" ] ]
+  ]
+}
