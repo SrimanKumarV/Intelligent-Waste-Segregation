@@ -151,9 +151,10 @@ function Ingest-TelemetryRecord ($jsonString) {
 
 try {
     while ($listener.IsListening) {
-        $context = $listener.GetContext()
-        $request = $context.Request
-        $response = $context.Response
+        try {
+            $context = $listener.GetContext()
+            $request = $context.Request
+            $response = $context.Response
 
         # CORS Headers
         $response.Headers.Add("Access-Control-Allow-Origin", "*")
@@ -198,7 +199,8 @@ try {
                         }
                     }
                 }
-                $json = $history | ConvertTo-Json -Depth 4
+                $json = if ($history.Count -eq 0) { "[]" } else { $history | ConvertTo-Json -Depth 4 }
+                if ($null -eq $json) { $json = "[]" }
                 $buf = [System.Text.Encoding]::UTF8.GetBytes($json)
                 $response.OutputStream.Write($buf, 0, $buf.Length)
             }
@@ -212,7 +214,8 @@ try {
                         }
                     }
                 }
-                $json = $events | ConvertTo-Json -Depth 4
+                $json = if ($events.Count -eq 0) { "[]" } else { $events | ConvertTo-Json -Depth 4 }
+                if ($null -eq $json) { $json = "[]" }
                 $buf = [System.Text.Encoding]::UTF8.GetBytes($json)
                 $response.OutputStream.Write($buf, 0, $buf.Length)
             }
@@ -299,6 +302,9 @@ try {
             $response.OutputStream.Write($msg, 0, $msg.Length)
         }
         $response.Close()
+        } catch {
+            Write-Host "[REQUEST EXCEPTION] $_" -ForegroundColor DarkGray
+        }
     }
 } finally {
     $listener.Stop()
