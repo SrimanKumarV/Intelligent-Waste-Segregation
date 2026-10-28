@@ -1,9 +1,12 @@
 /**
  * @file sensor_types.h
- * @brief Data structures for sensor readings and system state
+ * @brief Data structures for sensor readings, lid events, and system telemetry
  *
- * Defines enums and structs used across all firmware modules.
- * Keeps data representation separate from acquisition and logic.
+ * Strict Two Waste Categories:
+ *   - BIODEGRADABLE
+ *   - NON_BIODEGRADABLE
+ *
+ * Designed for low memory footprint on Arduino Uno (ATmega328P, 2KB SRAM).
  */
 
 #ifndef SENSOR_TYPES_H
@@ -12,144 +15,92 @@
 #include <Arduino.h>
 
 // ============================================================================
-// BIN IDENTIFICATION
+// TWO WASTE CATEGORIES
 // ============================================================================
-enum BinType {
-    BIN_BIODEGRADABLE     = 0,
-    BIN_NON_BIODEGRADABLE = 1,
-    BIN_COUNT             = 2
+enum WasteCategory : uint8_t {
+    CATEGORY_UNCLASSIFIED     = 0,
+    CATEGORY_BIODEGRADABLE    = 1,
+    CATEGORY_NON_BIODEGRADABLE= 2
 };
 
 // ============================================================================
-// SENSOR STATUS
+// SENSOR STATUS ENUMS
 // ============================================================================
-enum SensorStatus {
-    SENSOR_OK              = 0,  // Reading is valid
-    SENSOR_DISCONNECTED    = 1,  // Sensor not responding
-    SENSOR_OUT_OF_RANGE    = 2,  // Reading outside expected bounds
-    SENSOR_NOT_CALIBRATED  = 3,  // Needs calibration
-    SENSOR_WARMING_UP      = 4,  // Sensor in warm-up period (e.g., gas sensor)
-    SENSOR_TIMEOUT         = 5   // Communication timeout (e.g., HX711)
+enum SensorStatus : uint8_t {
+    SENSOR_OK              = 0,  // Reading valid
+    SENSOR_DISCONNECTED    = 1,  // Open circuit / no response
+    SENSOR_OUT_OF_RANGE    = 2,  // Reading outside physical limits
+    SENSOR_NOT_CALIBRATED  = 3,  // Operational but requires calibration
+    SENSOR_TIMEOUT         = 4   // Bus or echo response timeout
 };
 
 // ============================================================================
-// MOISTURE LEVEL
+// LID COMMAND STATES
 // ============================================================================
-enum MoistureLevel {
-    MOISTURE_DRY           = 0,
-    MOISTURE_INTERMEDIATE  = 1,
-    MOISTURE_WET           = 2,
-    MOISTURE_UNKNOWN       = 3   // Sensor fault
+enum LidCommandState : uint8_t {
+    LID_CLOSED             = 0,
+    LID_OPENING            = 1,
+    LID_OPEN               = 2,
+    LID_CLOSING            = 3
 };
 
 // ============================================================================
-// BIN FILL STATUS
+// SYSTEM FAULT BITMASK
 // ============================================================================
-enum BinFillStatus {
-    BIN_EMPTY              = 0,
-    BIN_NORMAL             = 1,
-    BIN_NEAR_CAPACITY      = 2,
-    BIN_FULL               = 3,
-    BIN_LEVEL_UNKNOWN      = 4   // Sensor fault
+enum FaultFlag : uint8_t {
+    FAULT_NONE                 = 0x00,
+    FAULT_MOISTURE_OFFLINE     = 0x01,
+    FAULT_HX711_TIMEOUT        = 0x02,
+    FAULT_ULTRASONIC_TIMEOUT   = 0x04,
+    FAULT_CALIBRATION_REQUIRED = 0x08
 };
 
 // ============================================================================
-// SYSTEM WARNING STATE
-// ============================================================================
-// Multiple states can be active simultaneously using bitwise OR.
-enum SystemState : uint8_t {
-    STATE_NORMAL              = 0x00,
-    STATE_POSSIBLE_MISMATCH   = 0x01,
-    STATE_BIN_NEAR_CAPACITY   = 0x02,
-    STATE_BIN_FULL            = 0x04,
-    STATE_SENSOR_FAULT        = 0x08,
-    STATE_CALIBRATION_NEEDED  = 0x10,
-    STATE_SYSTEM_WARMING_UP   = 0x20
-};
-
-// ============================================================================
-// INDIVIDUAL SENSOR READINGS
+// SENSOR READING STRUCTS
 // ============================================================================
 
-/** Gas sensor reading */
-struct GasReading {
-    int      rawValue;          // ADC raw value (0–4095)
-    bool     digitalState;      // Digital pin state (if connected)
-    bool     aboveThreshold;    // True if gas level exceeds GAS_THRESHOLD_HIGH
-    SensorStatus status;
-};
-
-/** Moisture sensor reading */
+/** Capacitive soil moisture sensor reading */
 struct MoistureReading {
-    int           rawValue;     // ADC raw value (0–4095)
-    MoistureLevel level;        // Interpreted moisture level
-    SensorStatus  status;
-};
-
-/** Metal sensor reading */
-struct MetalReading {
-    bool         metalDetected; // True if metal is present
-    bool         rawPinState;   // Raw digital pin state (before polarity correction)
+    int          rawValue;      // 10-bit raw ADC (0–1023)
+    float        calibratedPct; // 0.0% to 100.0% (valid only if isCalibrated)
+    bool         isCalibrated;  // True only after valid 2-point calibration
     SensorStatus status;
 };
 
-/** Weight reading from HX711 load cell */
+/** Load cell + HX711 amplifier weight reading */
 struct WeightReading {
-    float        weightGrams;   // Calibrated weight in grams
-    long         rawValue;      // Raw HX711 count (for diagnostics)
-    bool         isCalibrated;  // True if calibration factor is applied
+    float        weightGrams;   // Mass in grams (positive valid weight)
+    long         rawValue;      // Raw 24-bit delta counts from HX711
+    bool         isCalibrated;  // True only after reference mass calibration
     SensorStatus status;
 };
 
-/** Bin level reading from ultrasonic sensor */
-struct LevelReading {
-    float         distanceCm;   // Distance from sensor to waste surface (cm)
-    float         fillPercentage; // Calculated fill percentage (0–100%)
-    BinFillStatus fillStatus;   // Interpreted fill state
-    SensorStatus  status;
+/** Ultrasonic proximity reading for lid actuation */
+struct ProximityReading {
+    float        distanceCm;    // Distance to approaching object (cm)
+    bool         objectDetected;// True if distance <= PROXIMITY_THRESHOLD_CM
+    SensorStatus status;
 };
 
-// ============================================================================
-// AGGREGATED BIN DATA
-// ============================================================================
-
-/** Complete sensor data for one waste bin */
-struct BinData {
-    BinType         binType;
-    MoistureReading moisture;
-    MetalReading    metal;
-    WeightReading   weight;
-    LevelReading    level;
+/** Automatic lid state and feedback tracking */
+struct LidState {
+    LidCommandState commandState;         // Commanded servo/actuator state
+    bool            hasPhysicalFeedback;  // False: no limit switch/encoder installed
+    bool            physicalClosedVerified;
+    bool            physicalOpenVerified;
+    unsigned long   stateChangeTimestampMs;
 };
 
-/** Complete system sensor data */
-struct SystemData {
-    unsigned long   timestampMs;      // millis() at time of reading
-    GasReading      gas;              // Shared gas sensor (between bins)
-    BinData         bins[BIN_COUNT];  // Data for each bin
-};
-
-// ============================================================================
-// MISMATCH DETECTION RESULT
-// ============================================================================
-
-/** Result of waste mismatch analysis for one bin */
-struct MismatchResult {
-    BinType       binType;
-    uint8_t       systemState;        // Bitwise OR of SystemState flags
-    int           evidenceScore;      // Heuristic score (0–100), NOT a probability
-    int           persistenceCount;   // Consecutive cycles with mismatch detected
-    bool          alertActive;        // True if persistence threshold met
-    String        description;        // Human-readable explanation
-};
-
-/** Complete system analysis */
-struct SystemAnalysis {
-    unsigned long     timestampMs;
-    MismatchResult    binResults[BIN_COUNT];
-    bool              anySensorFault;
-    bool              anyCalibrationNeeded;
-    bool              systemWarmingUp;
+/** Complete system telemetry snapshot */
+struct SystemTelemetry {
+    unsigned long    sequenceNumber;
+    unsigned long    uptimeSeconds;
+    MoistureReading  moisture;
+    WeightReading    weight;
+    ProximityReading proximity;
+    LidState         lid;
+    uint8_t          faultBitmask;
+    WasteCategory    lastRecordedCategory;
 };
 
 #endif // SENSOR_TYPES_H

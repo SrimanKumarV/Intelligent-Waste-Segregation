@@ -1,285 +1,247 @@
 /**
  * @file serial_output.cpp
- * @brief Serial monitor output implementation
+ * @brief Structured telemetry protocol and command interface implementation
  *
- * Provides structured, readable serial output for debugging and
- * demonstration. Supports both human-readable and CSV formats.
- *
- * Sensor failures are explicitly reported — never silently shown as
- * valid zero readings.
+ * Implements:
+ *   - JSON Lines telemetry serialization using Flash PROGMEM strings (zero heap allocation)
+ *   - Explicit null values for missing or uncalibrated readings
+ *   - Non-blocking serial command interface
  */
 
 #include "serial_output.h"
-#include "detection.h"
-#include "leds.h"
+#include "sensors.h"
 #include "config.h"
-
-// ============================================================================
-// MODULE STATE
-// ============================================================================
-static unsigned long cycleCount = 0;
-
-// ============================================================================
-// INITIALIZATION
-// ============================================================================
 
 void serial_init() {
     Serial.begin(SERIAL_BAUD_RATE);
-    while (!Serial && millis() < 3000) {
-        ; // Wait for serial port (USB) — timeout after 3s
-    }
-    delay(100); // Allow serial to stabilise
+    // On Arduino Uno, delay briefly to let serial lines stabilize
+    delay(100);
 }
-
-// ============================================================================
-// BANNER
-// ============================================================================
 
 void serial_printBanner() {
-    Serial.println(F(""));
-    Serial.println(F("╔══════════════════════════════════════════════════╗"));
-    Serial.println(F("║  INTELLIGENT SOLID WASTE SEGREGATION SYSTEM     ║"));
-    Serial.print(  F("║  Firmware Version: "));
-    Serial.print(FIRMWARE_VERSION);
-    Serial.println(F("                         ║"));
-    Serial.println(F("║  Controller: ESP32                              ║"));
-    Serial.println(F("╚══════════════════════════════════════════════════╝"));
-    Serial.println(F(""));
-    Serial.println(F("Sensors: Gas(1), Moisture(2), Metal(2), Weight/HX711(2), Level(2)"));
-    Serial.println(F("Bins:    Biodegradable | Non-Biodegradable"));
-    Serial.println(F(""));
-    Serial.print(F("Gas warm-up time: "));
-    Serial.print(GAS_WARMUP_TIME_MS / 1000);
-    Serial.println(F(" seconds"));
-    Serial.println(F("─────────────────────────────────────────────────────"));
-}
-
-// ============================================================================
-// READINGS OUTPUT
-// ============================================================================
-
-static void printSensorValue(const char* label, int rawValue, SensorStatus status) {
-    Serial.print(F("  "));
-    Serial.print(label);
-    Serial.print(F(": "));
-    if (status == SENSOR_DISCONNECTED) {
-        Serial.println(F("DISCONNECTED"));
-    } else if (status == SENSOR_WARMING_UP) {
-        Serial.print(rawValue);
-        Serial.println(F(" (warming up)"));
-    } else {
-        Serial.println(rawValue);
-    }
-}
-
-void serial_printReadings(const SystemData& data, const SystemAnalysis& analysis) {
-    cycleCount++;
-
-    // Timestamp
-    unsigned long seconds = data.timestampMs / 1000;
-    unsigned long minutes = seconds / 60;
-    seconds %= 60;
-    Serial.println(F(""));
-    Serial.print(F("═══ Cycle #"));
-    Serial.print(cycleCount);
-    Serial.print(F(" | Uptime: "));
-    Serial.print(minutes);
-    Serial.print(F("m "));
-    Serial.print(seconds);
-    Serial.println(F("s ═══"));
-
-    // --- Gas Sensor ---
-    Serial.println(F("▸ GAS SENSOR (shared):"));
-    Serial.print(F("  Raw: "));
-    if (data.gas.status == SENSOR_DISCONNECTED) {
-        Serial.println(F("DISCONNECTED"));
-    } else {
-        Serial.print(data.gas.rawValue);
-        Serial.print(F(" | Digital: "));
-        Serial.print(data.gas.digitalState ? "HIGH" : "LOW");
-        Serial.print(F(" | Status: "));
-        Serial.println(detection_sensorStatusToString(data.gas.status));
-    }
-
-    // --- Per-bin sensors ---
-    const char* binNames[] = {"BIODEGRADABLE", "NON-BIODEGRADABLE"};
-    for (int b = 0; b < BIN_COUNT; b++) {
-        const BinData& bin = data.bins[b];
-        const MismatchResult& result = analysis.binResults[b];
-
-        Serial.println(F(""));
-        Serial.print(F("▸ BIN: "));
-        Serial.println(binNames[b]);
-
-        // Moisture
-        Serial.print(F("  Moisture:  Raw="));
-        if (bin.moisture.status == SENSOR_DISCONNECTED) {
-            Serial.println(F("DISCONNECTED"));
-        } else {
-            Serial.print(bin.moisture.rawValue);
-            Serial.print(F(" | Level="));
-            Serial.print(detection_moistureLevelToString(bin.moisture.level));
-            Serial.print(F(" | Status="));
-            Serial.println(detection_sensorStatusToString(bin.moisture.status));
-        }
-
-        // Metal
-        Serial.print(F("  Metal:     "));
-        if (bin.metal.status == SENSOR_DISCONNECTED) {
-            Serial.println(F("DISCONNECTED"));
-        } else {
-            Serial.print(bin.metal.metalDetected ? "DETECTED" : "None");
-            Serial.print(F(" | Raw Pin="));
-            Serial.print(bin.metal.rawPinState ? "HIGH" : "LOW");
-            Serial.print(F(" | Status="));
-            Serial.println(detection_sensorStatusToString(bin.metal.status));
-        }
-
-        // Weight
-        Serial.print(F("  Weight:    "));
-        if (bin.weight.status == SENSOR_TIMEOUT) {
-            Serial.println(F("TIMEOUT — HX711 not responding"));
-        } else if (bin.weight.status == SENSOR_DISCONNECTED) {
-            Serial.println(F("DISCONNECTED"));
-        } else {
-            Serial.print(bin.weight.weightGrams, 1);
-            Serial.print(F(" g | Calibrated="));
-            Serial.print(bin.weight.isCalibrated ? "Yes" : "NO");
-            Serial.print(F(" | Status="));
-            Serial.println(detection_sensorStatusToString(bin.weight.status));
-        }
-
-        // Level
-        Serial.print(F("  Level:     "));
-        if (bin.level.status == SENSOR_DISCONNECTED) {
-            Serial.println(F("DISCONNECTED"));
-        } else {
-            Serial.print(bin.level.distanceCm, 1);
-            Serial.print(F(" cm | Fill="));
-            Serial.print(bin.level.fillPercentage, 0);
-            Serial.print(F("% | Status="));
-            Serial.println(detection_fillStatusToString(bin.level.fillStatus));
-        }
-
-        // Mismatch analysis
-        Serial.print(F("  ▶ State:   "));
-        Serial.println(detection_stateToString(result.systemState));
-        Serial.print(F("  ▶ Score:   "));
-        Serial.print(result.evidenceScore);
-        Serial.print(F("/100 (heuristic) | Persist: "));
-        Serial.print(result.persistenceCount);
-        Serial.print(F("/"));
-        Serial.println(MISMATCH_PERSISTENCE_COUNT);
-        if (result.alertActive) {
-            Serial.print(F("  ⚠ ALERT:   "));
-            Serial.println(result.description);
-        }
-    }
-
-    // --- LED Status ---
-    Serial.println(F(""));
-    Serial.print(F("▸ "));
-    Serial.println(leds_getStateDescription());
-
-    Serial.println(F("─────────────────────────────────────────────────────"));
-}
-
-// ============================================================================
-// CSV OUTPUT
-// ============================================================================
-
-void serial_printCSVHeader() {
-    Serial.print(F("timestamp_ms"));
-    Serial.print(CSV_SEPARATOR);
-    Serial.print(F("gas_raw,gas_status"));
-    Serial.print(CSV_SEPARATOR);
-    Serial.print(F("bio_moisture_raw,bio_moisture_level"));
-    Serial.print(CSV_SEPARATOR);
-    Serial.print(F("bio_metal,bio_weight_g,bio_fill_pct,bio_state,bio_score"));
-    Serial.print(CSV_SEPARATOR);
-    Serial.print(F("nonbio_moisture_raw,nonbio_moisture_level"));
-    Serial.print(CSV_SEPARATOR);
-    Serial.println(F("nonbio_metal,nonbio_weight_g,nonbio_fill_pct,nonbio_state,nonbio_score"));
-}
-
-void serial_printCSV(const SystemData& data, const SystemAnalysis& analysis) {
-    Serial.print(data.timestampMs);
-
-    Serial.print(CSV_SEPARATOR);
-    Serial.print(data.gas.rawValue);
-    Serial.print(CSV_SEPARATOR);
-    Serial.print(detection_sensorStatusToString(data.gas.status));
-
-    for (int b = 0; b < BIN_COUNT; b++) {
-        const BinData& bin = data.bins[b];
-        const MismatchResult& res = analysis.binResults[b];
-
-        Serial.print(CSV_SEPARATOR);
-        Serial.print(bin.moisture.rawValue);
-        Serial.print(CSV_SEPARATOR);
-        Serial.print(detection_moistureLevelToString(bin.moisture.level));
-        Serial.print(CSV_SEPARATOR);
-        Serial.print(bin.metal.metalDetected ? 1 : 0);
-        Serial.print(CSV_SEPARATOR);
-        Serial.print(bin.weight.weightGrams, 1);
-        Serial.print(CSV_SEPARATOR);
-        Serial.print(bin.level.fillPercentage, 0);
-        Serial.print(CSV_SEPARATOR);
-        Serial.print(detection_stateToString(res.systemState));
-        Serial.print(CSV_SEPARATOR);
-        Serial.print(res.evidenceScore);
-    }
+    Serial.println();
+    Serial.println(F("=================================================="));
+    Serial.println(F(" INTELLIGENT WASTE SEGREGATION ANALYTICS (UNO)   "));
+    Serial.println(F(" Firmware: 2.0.0-UNO | Target: ATmega328P        "));
+    Serial.println(F(" Active Sensors: Moisture (A0), HX711 (D2/D3),   "));
+    Serial.println(F("                 HC-SR04 Proximity (D4/D5), Servo"));
+    Serial.println(F(" Categories: Biodegradable / Non-Biodegradable   "));
+    Serial.println(F(" Telemetry Format: JSON Lines (115200 baud)      "));
+    Serial.println(F(" Send 'h' for interactive serial commands        "));
+    Serial.println(F("=================================================="));
     Serial.println();
 }
 
-// ============================================================================
-// FAULT SUMMARY
-// ============================================================================
+void serial_printTelemetryJSON(const SystemTelemetry& telem) {
+    // Zero-allocation JSON Lines emitter designed for ATmega328P 2KB SRAM
+    Serial.print(F("{\"v\":"));
+    Serial.print(TELEMETRY_PROTOCOL_VER);
 
-void serial_printFaults(const SystemAnalysis& analysis) {
-    if (!analysis.anySensorFault && !analysis.anyCalibrationNeeded) {
-        return; // No faults to report
+    Serial.print(F(",\"dev\":\""));
+    Serial.print(F(DEVICE_ID));
+
+    Serial.print(F("\",\"seq\":"));
+    Serial.print(telem.sequenceNumber);
+
+    Serial.print(F(",\"up\":"));
+    Serial.print(telem.uptimeSeconds);
+
+    // Moisture fields
+    Serial.print(F(",\"moist_raw\":"));
+    Serial.print(telem.moisture.rawValue);
+
+    Serial.print(F(",\"moist_pct\":"));
+    if (telem.moisture.isCalibrated && telem.moisture.status == SENSOR_OK) {
+        Serial.print(telem.moisture.calibratedPct, 1);
+    } else {
+        Serial.print(F("null"));
     }
 
-    Serial.println(F(""));
-    Serial.println(F("⚠ SENSOR ISSUES:"));
+    Serial.print(F(",\"moist_ok\":"));
+    Serial.print(telem.moisture.status == SENSOR_OK ? F("true") : F("false"));
 
-    for (int b = 0; b < BIN_COUNT; b++) {
-        uint8_t state = analysis.binResults[b].systemState;
-        const char* name = (b == 0) ? "Bio" : "NonBio";
+    Serial.print(F(",\"moist_cal\":"));
+    Serial.print(telem.moisture.isCalibrated ? F("true") : F("false"));
 
-        if (state & STATE_SENSOR_FAULT) {
-            Serial.print(F("  ["));
-            Serial.print(name);
-            Serial.println(F("] Sensor fault detected — check connections"));
-        }
-        if (state & STATE_CALIBRATION_NEEDED) {
-            Serial.print(F("  ["));
-            Serial.print(name);
-            Serial.println(F("] Load cell calibration needed"));
-        }
+    // Weight fields
+    Serial.print(F(",\"weight_g\":"));
+    if (telem.weight.isCalibrated && telem.weight.status == SENSOR_OK) {
+        Serial.print(telem.weight.weightGrams, 1);
+    } else {
+        Serial.print(F("null"));
     }
+
+    Serial.print(F(",\"weight_raw\":"));
+    Serial.print(telem.weight.rawValue);
+
+    Serial.print(F(",\"weight_ok\":"));
+    Serial.print(telem.weight.status == SENSOR_OK ? F("true") : F("false"));
+
+    Serial.print(F(",\"weight_cal\":"));
+    Serial.print(telem.weight.isCalibrated ? F("true") : F("false"));
+
+    // Ultrasonic proximity fields
+    Serial.print(F(",\"dist_cm\":"));
+    if (telem.proximity.status == SENSOR_OK) {
+        Serial.print(telem.proximity.distanceCm, 1);
+    } else {
+        Serial.print(F("null"));
+    }
+
+    Serial.print(F(",\"prox\":"));
+    Serial.print(telem.proximity.objectDetected ? F("true") : F("false"));
+
+    // Lid command state
+    Serial.print(F(",\"lid_cmd\":\""));
+    switch (telem.lid.commandState) {
+        case LID_OPEN:    Serial.print(F("OPEN")); break;
+        case LID_OPENING: Serial.print(F("OPENING")); break;
+        case LID_CLOSING: Serial.print(F("CLOSING")); break;
+        default:          Serial.print(F("CLOSED")); break;
+    }
+    Serial.print(F("\""));
+
+    // Fault array
+    Serial.print(F(",\"faults\":["));
+    bool firstFault = true;
+    if (telem.faultBitmask & FAULT_MOISTURE_OFFLINE) {
+        Serial.print(F("\"MOISTURE_OFFLINE\""));
+        firstFault = false;
+    }
+    if (telem.faultBitmask & FAULT_HX711_TIMEOUT) {
+        if (!firstFault) Serial.print(F(","));
+        Serial.print(F("\"HX711_TIMEOUT\""));
+        firstFault = false;
+    }
+    if (telem.faultBitmask & FAULT_ULTRASONIC_TIMEOUT) {
+        if (!firstFault) Serial.print(F(","));
+        Serial.print(F("\"ULTRASONIC_TIMEOUT\""));
+        firstFault = false;
+    }
+    if (telem.faultBitmask & FAULT_CALIBRATION_REQUIRED) {
+        if (!firstFault) Serial.print(F(","));
+        Serial.print(F("\"CALIBRATION_REQUIRED\""));
+    }
+    Serial.print(F("]}"));
+    Serial.println(); // Trailing newline completes JSON Lines record
 }
 
-void serial_printCalibrationStatus() {
-    Serial.println(F(""));
-    Serial.println(F("LOAD CELL CALIBRATION STATUS:"));
-    Serial.println(F("  Both load cells use PLACEHOLDER calibration factors."));
-    Serial.println(F("  Accurate weight readings require calibration with"));
-    Serial.println(F("  known reference weights. See docs/CALIBRATION_GUIDE.md"));
+void serial_printHelp() {
+    Serial.println(F("\n--- AVAILABLE SERIAL COMMANDS ---"));
+    Serial.println(F("  t  : Tare HX711 load cell (zero point)"));
+    Serial.println(F("  c  : Calibrate load cell with reference mass"));
+    Serial.println(F("  m  : Calibrate moisture sensor air & water thresholds"));
+    Serial.println(F("  o  : Force lid OPEN command"));
+    Serial.println(F("  x  : Force lid CLOSE command"));
+    Serial.println(F("  h  : Print this help menu"));
+    Serial.println(F("---------------------------------\n"));
 }
 
-void serial_printWarmupStatus(unsigned long elapsedMs, unsigned long totalMs) {
-    int pct = (int)((elapsedMs * 100) / totalMs);
-    if (pct > 100) pct = 100;
-    Serial.print(F("\r  Gas sensor warm-up: "));
-    Serial.print(pct);
-    Serial.print(F("% ("));
-    Serial.print(elapsedMs / 1000);
-    Serial.print(F("/"));
-    Serial.print(totalMs / 1000);
-    Serial.print(F("s)"));
-    if (pct >= 100) {
-        Serial.println(F(" — READY"));
+void serial_handleCommands() {
+    if (!Serial.available()) return;
+
+    char cmd = Serial.read();
+    // Flush remaining characters
+    while (Serial.available()) Serial.read();
+
+    switch (cmd) {
+        case 't':
+        case 'T':
+            Serial.println(F("[CMD] Taring load cell..."));
+            sensors_tareWeight();
+            Serial.println(F("[CMD] Tare complete."));
+            break;
+
+        case 'c':
+        case 'C': {
+            Serial.println(F("\n[CALIB] --- LOAD CELL CALIBRATION ---"));
+            Serial.println(F("1. Ensure scale is EMPTY. Press any key to tare..."));
+            while (!Serial.available()) { delay(10); }
+            while (Serial.available()) Serial.read();
+
+            sensors_tareWeight();
+            Serial.println(F("Tare confirmed."));
+
+            Serial.println(F("2. Place a KNOWN weight on load cell."));
+            Serial.println(F("Enter weight in grams (e.g., 500):"));
+            while (!Serial.available()) { delay(10); }
+            float knownMass = Serial.parseFloat();
+            while (Serial.available()) Serial.read();
+
+            if (knownMass <= 0.0f) {
+                Serial.println(F("[ERROR] Invalid mass entered. Calibration cancelled."));
+                break;
+            }
+
+            Serial.print(F("Sampling with known mass: "));
+            Serial.print(knownMass, 1);
+            Serial.println(F("g..."));
+            delay(1500);
+
+            // Read raw units with scale=1.0f
+            sensors_setWeightCalibration(1.0f);
+            WeightReading wr = sensors_readWeight();
+            if (wr.status == SENSOR_TIMEOUT || wr.rawValue == 0) {
+                Serial.println(F("[ERROR] HX711 communication failed. Check wiring."));
+                break;
+            }
+
+            float newFactor = (float)wr.rawValue / knownMass;
+            sensors_setWeightCalibration(newFactor);
+
+            Serial.print(F("[SUCCESS] New calibration factor: "));
+            Serial.println(newFactor, 4);
+            break;
+        }
+
+        case 'm':
+        case 'M': {
+            Serial.println(F("\n[CALIB] --- MOISTURE SENSOR CALIBRATION ---"));
+            Serial.println(F("1. Hold sensor in DRY AIR. Press any key to record Air Raw..."));
+            while (!Serial.available()) { delay(10); }
+            while (Serial.available()) Serial.read();
+
+            MoistureReading dryRead = sensors_readMoisture();
+            int airRaw = dryRead.rawValue;
+            Serial.print(F("Recorded Air Raw ADC: "));
+            Serial.println(airRaw);
+
+            Serial.println(F("2. Submerge sensor tip in WATER. Press any key to record Water Raw..."));
+            while (!Serial.available()) { delay(10); }
+            while (Serial.available()) Serial.read();
+
+            MoistureReading wetRead = sensors_readMoisture();
+            int waterRaw = wetRead.rawValue;
+            Serial.print(F("Recorded Water Raw ADC: "));
+            Serial.println(waterRaw);
+
+            if (airRaw > waterRaw && waterRaw > 0) {
+                sensors_setMoistureCalibration(airRaw, waterRaw);
+                Serial.println(F("[SUCCESS] Moisture calibration stored."));
+            } else {
+                Serial.println(F("[ERROR] Invalid readings (Air Raw must be greater than Water Raw)."));
+            }
+            break;
+        }
+
+        case 'o':
+        case 'O':
+            Serial.println(F("[CMD] Manual Lid OPEN"));
+            sensors_controlLid(LID_OPEN);
+            break;
+
+        case 'x':
+        case 'X':
+            Serial.println(F("[CMD] Manual Lid CLOSE"));
+            sensors_controlLid(LID_CLOSED);
+            break;
+
+        case 'h':
+        case 'H':
+            serial_printHelp();
+            break;
+
+        default:
+            break;
     }
 }

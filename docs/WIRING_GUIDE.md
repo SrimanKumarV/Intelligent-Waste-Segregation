@@ -1,226 +1,101 @@
-# Wiring Guide — Intelligent Solid Waste Segregation System
+# Wiring Guide — Intelligent Waste Segregation Analytics (Arduino Uno)
 
-> ⚠ **SAFETY FIRST**  
-> - Disconnect ALL power before making or changing connections  
-> - Never hot-swap sensor wires  
-> - Double-check all connections before applying power  
-> - ESP32 GPIOs are 3.3V — do NOT apply 5V directly to any GPIO pin
+This guide provides step-by-step assembly instructions for connecting the active physical prototype sensors and actuators to an Arduino Uno.
 
-## Required Components
+---
 
-| # | Component | Quantity | Notes |
-|---|-----------|----------|-------|
-| 1 | ESP32 DevKit V1 | 1 | 30-pin or 38-pin |
-| 2 | MQ-series gas sensor module | 1 | MQ-2, MQ-4, or MQ-135 |
-| 3 | Soil moisture sensor module | 2 | Capacitive (preferred) or resistive |
-| 4 | Inductive proximity / metal detector module | 2 | NPN output type recommended |
-| 5 | Load cell (bar type, 5kg or 10kg) | 2 | Match to expected bin weight |
-| 6 | HX711 load cell amplifier module | 2 | Includes ADC |
-| 7 | HC-SR04 ultrasonic sensor | 2 | 5V type |
-| 8 | LED (Red) | 3 | For mismatch and fault indicators |
-| 9 | LED (Green) | 1 | System OK indicator |
-| 10 | LED (Yellow/Amber) | 1 | Bin full indicator |
-| 11 | Resistor 220Ω | 5 | Current limiting for LEDs |
-| 12 | Resistor 1kΩ | 2 | Voltage divider for HC-SR04 echo |
-| 13 | Resistor 2kΩ | 2 | Voltage divider for HC-SR04 echo |
-| 14 | Breadboard (full size) | 1–2 | |
-| 15 | Jumper wires (M-M, M-F) | ~50 | Assorted colours recommended |
-| 16 | Waste bin (small) | 2 | Biodegradable + Non-biodegradable |
-| 17 | USB cable (micro-USB or USB-C) | 1 | For ESP32 programming and power |
-| 18 | 5V/2A power supply (optional) | 1 | If USB power is insufficient |
+## 1. Required Components
 
-## Step-by-Step Assembly
+| Item | Component | Specification | Quantity |
+| :--- | :--- | :--- | :--- |
+| 1 | Microcontroller | Arduino Uno R3 (ATmega328P) with USB-B cable | 1 |
+| 2 | Moisture Sensor | Capacitive Soil Moisture Sensor v1.2 | 1 |
+| 3 | Load Cell & Amp | Straight bar load cell (5kg–10kg) + HX711 module | 1 |
+| 4 | Proximity Sensor | HC-SR04 Ultrasonic Sensor | 1 |
+| 5 | Lid Actuator | Servo Motor (SG90 / MG90S 180° rotation) | 1 |
+| 6 | Visual LEDs | 1× Amber/Yellow LED, 1× Red LED | 2 |
+| 7 | Resistors | 220Ω, 0.25W (current limiting for LEDs) | 2 |
+| 8 | Prototyping | Half-size solderless breadboard + Dupont jumper wires | 1 set |
+| 9 | Power Supply | 5V USB connection to PC or external 5V 1A DC adapter | 1 |
 
-### Step 1: Place ESP32 on Breadboard
+---
 
-1. Insert the ESP32 DevKit across the centre channel of the breadboard
-2. Ensure pins are accessible on both sides
-3. **Do NOT connect USB yet**
+## 2. Step-by-Step Wiring Sequence
 
-### Step 2: Power Rails
+### Step 1: Power & Common Ground Distribution
+1. Connect the **5V** pin on the Arduino Uno to the **Red (+) power rail** on the breadboard.
+2. Connect the **GND** pin on the Arduino Uno to the **Blue/Black (-) ground rail** on the breadboard.
+3. *Note:* If using an external 5V power supply for the servo, ensure the external power supply GND is connected directly to the Arduino Uno GND rail (Common Ground).
 
-1. Connect ESP32 `3V3` pin to the breadboard's 3.3V power rail (+)
-2. Connect ESP32 `GND` pin to the breadboard's ground rail (–)
-3. If using 5V sensors, connect ESP32 `VIN` (5V) to a separate 5V power rail
-4. **All components must share a common ground**
+---
 
-### Step 3: Gas Sensor (MQ-series)
-
+### Step 2: Capacitive Soil Moisture Sensor
+The capacitive moisture sensor uses three pins:
 ```
-MQ Sensor Module    ESP32
-─────────────────   ─────
-VCC  ──────────── → 5V (VIN rail)
-GND  ──────────── → GND (common ground)
-AOUT ──────────── → GPIO 36 (VP)  [via voltage divider if > 3.3V output]
-DOUT ──────────── → GPIO 23       [optional]
+Moisture Sensor VCC   ────> Breadboard 5V Rail
+Moisture Sensor GND   ────> Breadboard GND Rail
+Moisture Sensor AOUT  ────> Arduino Uno Pin A0
 ```
+*Installation Note:* Keep the onboard circuitry and header pins dry. Only the lower white capacitive trace blade should be inserted into the waste bin.
 
-**Voltage Divider for AOUT (if module outputs > 3.3V):**
+---
+
+### Step 3: Load Cell and HX711 Module
+1. **Connect Load Cell to HX711 Module (Wheatstone Bridge):**
+   - **Red Wire** ────> `E+` (Excitation positive)
+   - **Black Wire** ──> `E-` (Excitation negative / GND)
+   - **White Wire** ──> `A-` (Signal negative)
+   - **Green Wire** ──> `A+` (Signal positive)
+   *(If your load cell has a yellow shield wire, connect it to GND or leave unstripped).*
+
+2. **Connect HX711 Module to Arduino Uno:**
+   ```
+   HX711 VCC   ────> Breadboard 5V Rail
+   HX711 GND   ────> Breadboard GND Rail
+   HX711 DOUT  ────> Arduino Uno Pin D2
+   HX711 SCK   ────> Arduino Uno Pin D3
+   ```
+*Mechanical Note:* Ensure the load cell is mounted with spacer blocks so the center beam can deflect freely under weight without binding against the base plate.
+
+---
+
+### Step 4: HC-SR04 Ultrasonic Proximity Sensor
 ```
-MQ AOUT ── R1 (2kΩ) ──┬── GPIO 36
-                        │
-                   R2 (1kΩ)
-                        │
-                       GND
+HC-SR04 VCC   ────> Breadboard 5V Rail
+HC-SR04 GND   ────> Breadboard GND Rail
+HC-SR04 TRIG  ────> Arduino Uno Pin D4
+HC-SR04 ECHO  ────> Arduino Uno Pin D5
 ```
-This scales 5V → ~1.67V. Adjust R values if needed for full ADC range.
+*Note:* Since the Arduino Uno operates at 5.0V TTL logic, the ECHO output can be wired directly to Pin D5 without requiring a voltage divider. Mount the sensor facing outward at the waste deposit opening.
 
-> **Note:** Many MQ breakout modules have a built-in potentiometer for the digital threshold. The analog output may already be within 0–3.3V range on some modules. **Measure with a multimeter before connecting.**
+---
 
-### Step 4: Moisture Sensors
-
-**Biodegradable Bin Moisture Sensor:**
+### Step 5: Lid Actuator (Servo Motor)
 ```
-Sensor Module       ESP32
-─────────────────   ─────
-VCC  ──────────── → 3.3V rail (or 5V if required by module)
-GND  ──────────── → GND
-AOUT ──────────── → GPIO 39 (VN)
+Servo Power (Red)    ────> Breadboard 5V Rail (or External 5V Power Supply)
+Servo Ground (Brown/Black) ─> Breadboard GND Rail (Shared Common Ground)
+Servo PWM (Orange/Yellow) ──> Arduino Uno Pin D6
 ```
+*Mechanical Alignment:* Before attaching the servo horn/arm to the bin lid linkage, power the Uno so the servo defaults to 0° (Closed position). Then fasten the mechanical arm.
 
-**Non-Biodegradable Bin Moisture Sensor:**
-```
-Sensor Module       ESP32
-─────────────────   ─────
-VCC  ──────────── → 3.3V rail
-GND  ──────────── → GND
-AOUT ──────────── → GPIO 34
-```
+---
 
-> **Note:** If using 5V moisture modules, check if analog output exceeds 3.3V. Use a voltage divider if needed.
+### Step 6: Status & Fault Indicator LEDs
+1. **Proximity / Lid Open LED (Amber/Yellow):**
+   - Arduino Uno **Pin D7** ──> 220Ω Resistor ──> Anode (long leg) of Amber LED
+   - Cathode (short leg / flat edge) ──> Breadboard GND Rail
+2. **Sensor Fault LED (Red):**
+   - Arduino Uno **Pin D8** ──> 220Ω Resistor ──> Anode (long leg) of Red LED
+   - Cathode (short leg / flat edge) ──> Breadboard GND Rail
+3. **Heartbeat LED:** Uses the Arduino Uno onboard LED on **Pin D13**.
 
-### Step 5: Metal Sensors
+---
 
-**Biodegradable Bin Metal Sensor:**
-```
-Sensor Module       ESP32
-─────────────────   ─────
-VCC  ──────────── → 5V
-GND  ──────────── → GND
-OUT  ──────────── → GPIO 18
-```
+## 3. Pre-Power Safety Checklist
 
-**Non-Biodegradable Bin Metal Sensor:**
-```
-Sensor Module       ESP32
-─────────────────   ─────
-VCC  ──────────── → 5V
-GND  ──────────── → GND
-OUT  ──────────── → GPIO 19
-```
-
-> **Note:** If your metal sensor uses an NPN open-collector output, the internal pull-up enabled in firmware (INPUT_PULLUP) should be sufficient. Verify the output polarity matches the `METAL_ACTIVE_LOW` setting in `config.h`.
-
-### Step 6: Load Cells with HX711 Modules
-
-**Load Cell to HX711 Wiring (same for both):**
-```
-Load Cell Wire      HX711 Module
-──────────────────  ────────────
-Red    (E+)  ───── → E+
-Black  (E–)  ───── → E–
-White  (A–)  ───── → A–
-Green  (A+)  ───── → A+
-```
-
-> Load cell wire colours may vary. Consult your load cell's datasheet.
-
-**HX711 #1 (Biodegradable Bin) to ESP32:**
-```
-HX711 Module        ESP32
-─────────────────   ─────
-VCC  ──────────── → 5V (or 3.3V — check module)
-GND  ──────────── → GND
-DOUT ──────────── → GPIO 16
-SCK  ──────────── → GPIO 4
-```
-
-**HX711 #2 (Non-Biodegradable Bin) to ESP32:**
-```
-HX711 Module        ESP32
-─────────────────   ─────
-VCC  ──────────── → 5V (or 3.3V)
-GND  ──────────── → GND
-DOUT ──────────── → GPIO 17
-SCK  ──────────── → GPIO 5
-```
-
-### Step 7: Ultrasonic Level Sensors (HC-SR04)
-
-**HC-SR04 #1 (Biodegradable Bin):**
-```
-HC-SR04             ESP32
-─────────────────   ─────
-VCC  ──────────── → 5V
-GND  ──────────── → GND
-TRIG ──────────── → GPIO 26
-ECHO ── [voltage divider] → GPIO 25
-```
-
-**HC-SR04 #2 (Non-Biodegradable Bin):**
-```
-HC-SR04             ESP32
-─────────────────   ─────
-VCC  ──────────── → 5V
-GND  ──────────── → GND
-TRIG ──────────── → GPIO 27
-ECHO ── [voltage divider] → GPIO 14
-```
-
-**ECHO Voltage Divider (REQUIRED for each HC-SR04):**
-```
-HC-SR04 ECHO ── R1 (1kΩ) ──┬── ESP32 GPIO
-                             │
-                        R2 (2kΩ)
-                             │
-                            GND
-```
-
-### Step 8: LED Indicators
-
-Each LED requires a current-limiting resistor (220Ω) in series.
-
-```
-ESP32 GPIO ── 220Ω ── LED Anode (+) ── LED Cathode (–) ── GND
-```
-
-| LED Colour | Function | GPIO |
-|------------|----------|------|
-| Green | System OK | GPIO 2 (on-board LED on many boards) |
-| Red | Bio bin mismatch | GPIO 13 |
-| Red | NonBio bin mismatch | GPIO 15 |
-| Yellow | Bin full / near capacity | GPIO 33 |
-| Red | Sensor fault (blinks) | GPIO 32 |
-
-> **Note:** GPIO 2 is the on-board LED on most ESP32 DevKit boards. If using an external LED on GPIO 2, ensure it doesn't interfere with boot.
-
-### Step 9: Sensor Mounting
-
-1. **Ultrasonic sensors:** Mount at the top of each bin, facing downward. Ensure clear line of sight to the waste surface. Secure with hot glue or brackets.
-2. **Load cells:** Place under each bin as a weighing platform. Ensure the bin sits level on the load cell.
-3. **Metal sensors:** Position near the bin opening where waste is deposited.
-4. **Moisture sensors:** Position where they can contact deposited waste.
-5. **Gas sensor:** Position between the two bins or near the biodegradable bin.
-
-### Step 10: Pre-Power Checklist
-
-Before connecting USB or power:
-
-- [ ] All GND connections are tied together
-- [ ] No 5V wire touches any ESP32 GPIO pin directly
-- [ ] Voltage dividers are in place for HC-SR04 ECHO pins
-- [ ] Gas sensor analog output is within 0–3.3V range (or has divider)
-- [ ] Each LED has a 220Ω series resistor
-- [ ] Load cells are connected to HX711 modules (NOT directly to ESP32)
-- [ ] No pins are double-assigned (check against PIN_MAPPING.md)
-- [ ] Wires are secure and not loose on the breadboard
-- [ ] No short circuits between adjacent rows
-
-### Step 11: Power On and Test
-
-1. Connect ESP32 via USB to computer
-2. Open serial monitor at 115200 baud
-3. Observe the startup banner and LED self-test
-4. Wait for gas sensor warm-up (30 seconds)
-5. Check serial output for sensor readings and any error messages
-6. Refer to `CALIBRATION_GUIDE.md` for load cell calibration
+Before plugging in the USB cable:
+- [ ] Verify that no breadboard jumpers bridge between 5V and GND (check resistance with multimeter).
+- [ ] Verify that the HX711 DOUT and SCK wires are firmly seated in Pins D2 and D3.
+- [ ] Confirm servo polarity: Red to 5V, Brown/Black to GND. Reversing servo power will destroy the servo board.
+- [ ] Verify that 220Ω resistors are in series with each LED.
+- [ ] Ensure the load cell beam has mechanical clearance to flex under applied mass.

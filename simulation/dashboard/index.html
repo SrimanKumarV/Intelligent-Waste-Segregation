@@ -3,308 +3,392 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Intelligent Solid Waste Segregation Analysis — Digital Twin Simulation Dashboard & Live ESP32 Telemetry Monitor">
-  <title>Intelligent Solid Waste Segregation — Digital Twin & Telemetry</title>
+  <meta name="description" content="Intelligent Waste Segregation Analytics — Real-Time IoT Dashboard for Arduino Uno">
+  <title>Intelligent Waste Segregation Analytics — IoT Dashboard</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <div class="app-container">
     <!-- Header -->
     <header class="app-header">
-      <div class="brand">
-        <div class="brand-icon">♻️</div>
+      <div class="brand-group">
+        <div class="brand-symbol">♻</div>
         <div class="brand-text">
-          <h1>Intelligent Solid Waste Segregation Analysis</h1>
-          <p>ESP32 Dual-Bin Monitoring • Rule-Based Mismatch Detection • Digital Twin</p>
+          <h1>Intelligent Waste Segregation Analytics</h1>
+          <p>Arduino Uno Physical Prototype • Dual-Category Waste Segregation • Real-Time IoT Telemetry</p>
         </div>
       </div>
-      <div class="header-actions">
-        <div id="connection-badge" class="badge-mode sim">● SIMULATED DIGITAL TWIN</div>
-        <button id="btn-connect-serial" class="btn-serial-connect" title="Connect to ESP32 over USB via Web Serial">
-          <svg width="16" height="16" fill="currentColor" viewBox="0 0 16 16">
-            <path d="M11 2.5a2.5 2.5 0 1 1-5 0 2.5 2.5 0 0 1 5 0zm.5 4.5h-7a.5.5 0 0 0-.5.5v7a.5.5 0 0 0 .5.5h7a.5.5 0 0 0 .5-.5v-7a.5.5 0 0 0-.5-.5z"/>
+      <div class="header-status-group">
+        <div id="conn-badge" class="badge-status connecting">
+          <span class="status-indicator-dot"></span>
+          <span id="conn-text">Awaiting Telemetry...</span>
+        </div>
+        <button id="btn-webserial" class="btn-header" title="Connect directly to Arduino Uno via USB Serial">
+          <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
           </svg>
-          Connect ESP32 (USB)
+          <span id="btn-webserial-text">Direct USB (Web Serial)</span>
         </button>
       </div>
     </header>
 
-    <!-- Virtual LED Hardware Cluster -->
-    <section class="led-cluster-card">
-      <div class="card-title">
-        <span>Hardware LED Indicators (ESP32 GPIO Outputs)</span>
-        <span style="font-size: 0.75rem; color: var(--text-dim);">Current Limiting: 220Ω series resistors</span>
+    <!-- System Health & Connectivity Strip -->
+    <section class="health-strip">
+      <div class="health-metrics">
+        <div class="health-item">
+          <span class="health-label">Device Identifier</span>
+          <span class="health-val" id="val-device-id">—</span>
+        </div>
+        <div class="health-item">
+          <span class="health-label">Controller</span>
+          <span class="health-val">Arduino Uno (5V)</span>
+        </div>
+        <div class="health-item">
+          <span class="health-label">Last Packet Received</span>
+          <span class="health-val" id="val-last-received">Never</span>
+        </div>
+        <div class="health-item">
+          <span class="health-label">Device Uptime</span>
+          <span class="health-val" id="val-uptime">0s</span>
+        </div>
+        <div class="health-item">
+          <span class="health-label">Active Faults</span>
+          <span class="health-val" id="val-fault-count">0</span>
+        </div>
       </div>
-      <div class="led-grid">
-        <!-- LED 1: System OK -->
-        <div class="led-unit" id="unit-led-ok">
-          <div class="led-lamp green on" id="led-ok"></div>
-          <div class="led-info">
-            <h4>System OK</h4>
-            <span>GPIO 2 • Active Heartbeat</span>
-          </div>
-        </div>
+      <div class="hardware-spec-badge">
+        ATmega328P • 115200 Baud • JSON Lines
+      </div>
+    </section>
 
-        <!-- LED 2: Bio Mismatch -->
-        <div class="led-unit" id="unit-led-bio">
-          <div class="led-lamp red" id="led-bio-mis"></div>
-          <div class="led-info">
-            <h4>Bio Mismatch</h4>
-            <span>GPIO 13 • Metal in Bio</span>
-          </div>
-        </div>
+    <!-- Live Sensor Telemetry Cards -->
+    <section>
+      <div class="section-title">
+        <span>Live Sensor Telemetry</span>
+        <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
+          Actual Physical Readings Only
+        </span>
+      </div>
 
-        <!-- LED 3: Non-Bio Mismatch -->
-        <div class="led-unit" id="unit-led-nonbio">
-          <div class="led-lamp red" id="led-nonbio-mis"></div>
-          <div class="led-info">
-            <h4>Non-Bio Mismatch</h4>
-            <span>GPIO 15 • Moist + Gas</span>
+      <div class="sensor-grid">
+        <!-- 1. Capacitive Moisture Sensor -->
+        <article class="sensor-card" id="card-moisture">
+          <div class="card-header">
+            <div class="sensor-title-group">
+              <h3>Capacitive Soil Moisture</h3>
+              <span class="sensor-pin-label">Analog In: Pin A0</span>
+            </div>
+            <span class="card-pill uncalibrated" id="moist-status-pill">AWAITING</span>
           </div>
-        </div>
+          <div class="card-main-metric">
+            <div class="metric-number-group">
+              <span class="metric-value" id="moist-val">—</span>
+              <span class="metric-unit" id="moist-unit">%</span>
+            </div>
+            <p class="metric-subtext" id="moist-subtext">Awaiting valid sensor reading</p>
+          </div>
+          <div class="card-meta-list">
+            <div class="meta-row">
+              <span class="meta-label">Raw 10-Bit ADC</span>
+              <span class="meta-val" id="moist-raw-adc">—</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Calibration State</span>
+              <span class="meta-val" id="moist-calib-state">Uncalibrated</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Valid Range</span>
+              <span class="meta-val">50 – 980 ADC</span>
+            </div>
+          </div>
+        </article>
 
-        <!-- LED 4: Bin Full -->
-        <div class="led-unit" id="unit-led-full">
-          <div class="led-lamp amber" id="led-full"></div>
-          <div class="led-info">
-            <h4>Bin Full Warning</h4>
-            <span>GPIO 33 • Level ≥ 90%</span>
+        <!-- 2. Load Cell & HX711 -->
+        <article class="sensor-card" id="card-weight">
+          <div class="card-header">
+            <div class="sensor-title-group">
+              <h3>Load Cell + HX711</h3>
+              <span class="sensor-pin-label">Digital: D2 (DOUT), D3 (SCK)</span>
+            </div>
+            <span class="card-pill uncalibrated" id="weight-status-pill">AWAITING</span>
           </div>
-        </div>
+          <div class="card-main-metric">
+            <div class="metric-number-group">
+              <span class="metric-value" id="weight-val">—</span>
+              <span class="metric-unit">g</span>
+            </div>
+            <p class="metric-subtext" id="weight-subtext">Awaiting valid sensor reading</p>
+          </div>
+          <div class="card-meta-list">
+            <div class="meta-row">
+              <span class="meta-label">Raw HX711 Counts</span>
+              <span class="meta-val" id="weight-raw-counts">—</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Calibration Factor</span>
+              <span class="meta-val" id="weight-calib-state">Required</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Zero / Tare Offset</span>
+              <span class="meta-val" id="weight-tare-state">—</span>
+            </div>
+          </div>
+        </article>
 
-        <!-- LED 5: Sensor Fault -->
-        <div class="led-unit" id="unit-led-fault">
-          <div class="led-lamp red" id="led-fault"></div>
-          <div class="led-info">
-            <h4>Sensor Fault</h4>
-            <span>GPIO 32 • Blinking on Error</span>
+        <!-- 3. Ultrasonic Proximity Sensor -->
+        <article class="sensor-card" id="card-proximity">
+          <div class="card-header">
+            <div class="sensor-title-group">
+              <h3>Ultrasonic Proximity</h3>
+              <span class="sensor-pin-label">Digital: D4 (TRIG), D5 (ECHO)</span>
+            </div>
+            <span class="card-pill uncalibrated" id="prox-status-pill">AWAITING</span>
           </div>
+          <div class="card-main-metric">
+            <div class="metric-number-group">
+              <span class="metric-value" id="prox-val">—</span>
+              <span class="metric-unit">cm</span>
+            </div>
+            <p class="metric-subtext" id="prox-subtext">Target threshold: ≤ 20.0 cm</p>
+          </div>
+          <div class="card-meta-list">
+            <div class="meta-row">
+              <span class="meta-label">Object Detected</span>
+              <span class="meta-val" id="prox-detected">—</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Trigger Window</span>
+              <span class="meta-val">2.0 – 20.0 cm</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Echo Response</span>
+              <span class="meta-val" id="prox-echo-health">—</span>
+            </div>
+          </div>
+        </article>
+
+        <!-- 4. Automatic Lid Actuator -->
+        <article class="sensor-card" id="card-lid">
+          <div class="card-header">
+            <div class="sensor-title-group">
+              <h3>Lid Actuator Status</h3>
+              <span class="sensor-pin-label">PWM Output: Pin D6</span>
+            </div>
+            <span class="card-pill uncalibrated" id="lid-status-pill">CLOSED</span>
+          </div>
+          <div class="card-main-metric">
+            <div class="metric-number-group">
+              <span class="metric-value" id="lid-val">CLOSED</span>
+            </div>
+            <p class="metric-subtext" id="lid-subtext">Commanded state: 0° servo angle</p>
+          </div>
+          <div class="card-meta-list">
+            <div class="meta-row">
+              <span class="meta-label">Physical Feedback</span>
+              <span class="meta-val" style="color: var(--accent-amber);">Commanded Only</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Hold Open Duration</span>
+              <span class="meta-val">4000 ms</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Debounce / Cooldown</span>
+              <span class="meta-val">Active (1.5s)</span>
+            </div>
+          </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- Two Waste Categories Section -->
+    <section>
+      <div class="section-title">
+        <span>Dual Waste Category Analytics</span>
+        <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
+          Calculated Strictly from Verified Recorded Events
+        </span>
+      </div>
+
+      <div class="categories-container">
+        <!-- Category 1: Biodegradable -->
+        <article class="category-card bio">
+          <div class="category-card-header">
+            <div class="category-badge-tag">
+              <span>●</span>
+              <h3>Biodegradable Waste</h3>
+            </div>
+            <span class="card-pill ok">Category 1</span>
+          </div>
+          <div class="category-stats-row">
+            <div class="category-stat-item">
+              <h4 id="cat-bio-count">0</h4>
+              <span>Recorded Events</span>
+            </div>
+            <div class="category-stat-item">
+              <h4 id="cat-bio-pct">0%</h4>
+              <span>Distribution</span>
+            </div>
+            <div class="category-stat-item">
+              <h4 id="cat-bio-weight">0.0 kg</h4>
+              <span>Total Mass</span>
+            </div>
+          </div>
+          <div class="category-progress-bar">
+            <div class="category-progress-fill" id="cat-bio-bar" style="width: 0%;"></div>
+          </div>
+          <p style="font-size: 0.8rem; color: var(--text-muted);">
+            Organic matter, food scraps, compostable material. High moisture content.
+          </p>
+        </article>
+
+        <!-- Category 2: Non-Biodegradable -->
+        <article class="category-card nonbio">
+          <div class="category-card-header">
+            <div class="category-badge-tag">
+              <span>●</span>
+              <h3>Non-Biodegradable Waste</h3>
+            </div>
+            <span class="card-pill uncalibrated">Category 2</span>
+          </div>
+          <div class="category-stats-row">
+            <div class="category-stat-item">
+              <h4 id="cat-nonbio-count">0</h4>
+              <span>Recorded Events</span>
+            </div>
+            <div class="category-stat-item">
+              <h4 id="cat-nonbio-pct">0%</h4>
+              <span>Distribution</span>
+            </div>
+            <div class="category-stat-item">
+              <h4 id="cat-nonbio-weight">0.0 kg</h4>
+              <span>Total Mass</span>
+            </div>
+          </div>
+          <div class="category-progress-bar">
+            <div class="category-progress-fill" id="cat-nonbio-bar" style="width: 0%;"></div>
+          </div>
+          <p style="font-size: 0.8rem; color: var(--text-muted);">
+            Inorganic material, metals, plastics, dry composites, packaging.
+          </p>
+        </article>
+      </div>
+
+      <!-- Quick Classification Logging Form -->
+      <div class="classification-entry-box">
+        <h4 style="font-size: 0.92rem; font-weight: 700; color: var(--text-main);">
+          Record Verified Waste Segregation Event
+        </h4>
+        <p style="font-size: 0.8rem; color: var(--text-muted);">
+          Associate the active physical sensor reading with a verified classification record.
+        </p>
+        <div class="entry-form-row">
+          <select id="select-category" class="form-select">
+            <option value="BIODEGRADABLE">Biodegradable Waste</option>
+            <option value="NON_BIODEGRADABLE">Non-Biodegradable Waste</option>
+          </select>
+          <input type="text" id="input-item-notes" class="form-input" placeholder="Item description (e.g. Fruit peel, Plastic bottle)" style="flex: 1; min-width: 200px;">
+          <button id="btn-submit-classification" class="btn-header primary">
+            Log Genuine Event
+          </button>
         </div>
       </div>
     </section>
 
-    <!-- Quick Scenario Presets -->
-    <section class="preset-strip">
-      <button class="preset-btn active" id="preset-normal-bio" onclick="applyPreset('normal-bio')">🌱 Normal Bio Waste</button>
-      <button class="preset-btn" id="preset-normal-nonbio" onclick="applyPreset('normal-nonbio')">🥫 Metal in Non-Bio (OK)</button>
-      <button class="preset-btn" id="preset-mismatch-bio" onclick="applyPreset('mismatch-bio')">⚠ Mismatch: Metal in Bio</button>
-      <button class="preset-btn" id="preset-mismatch-nonbio" onclick="applyPreset('mismatch-nonbio')">⚠ Mismatch: Wet Food in Dry Bin</button>
-      <button class="preset-btn" id="preset-wet-only-nonbio" onclick="applyPreset('wet-only-nonbio')">💧 Wet Plastic Alone (Not Bio!)</button>
-      <button class="preset-btn" id="preset-full-bins" onclick="applyPreset('full-bins')">📦 Both Bins Full (95%)</button>
-      <button class="preset-btn" id="preset-fault" onclick="applyPreset('fault')">⚡ Sensor Line Fault</button>
-      <button class="preset-btn" id="preset-clean" onclick="applyPreset('clean')">🔄 Empty Bins / Clean Slate</button>
+    <!-- Real Lid Activity Event History -->
+    <section class="data-card">
+      <div class="section-title" style="margin-bottom: 0;">
+        <span>Lid Activity Event History</span>
+        <button id="btn-refresh-lid" class="btn-header" style="padding: 4px 10px; font-size: 0.75rem;">
+          Refresh History
+        </button>
+      </div>
+      <table class="custom-table">
+        <thead>
+          <tr>
+            <th>Timestamp</th>
+            <th>Trigger Type</th>
+            <th>Distance</th>
+            <th>State Transition</th>
+            <th>Actuator Response</th>
+          </tr>
+        </thead>
+        <tbody id="lid-events-tbody">
+          <tr>
+            <td colspan="5" class="empty-state-notice">
+              No lid opening events recorded yet. Connect sensor hardware to monitor proximity detections.
+            </td>
+          </tr>
+        </tbody>
+      </table>
     </section>
 
-    <!-- Main Dual-Bin Dashboard Grid -->
-    <main class="dashboard-grid">
-      <!-- BIN 1: BIODEGRADABLE -->
-      <article class="bin-card bio">
-        <div class="bin-header">
-          <div class="bin-title-group">
-            <span class="bin-badge-tag"></span>
-            <h2>Biodegradable Bin</h2>
-          </div>
-          <span class="bin-status-pill normal" id="bio-status-pill">STATUS: NORMAL</span>
-        </div>
-
-        <div class="bin-visual-row">
-          <!-- Fill Tank Graphic -->
-          <div class="tank-container">
-            <div class="fill-tank" id="bio-tank">
-              <div class="tank-marker full" title="Full threshold: 90%"></div>
-              <div class="tank-marker near" title="Near-full threshold: 75%"></div>
-              <div class="tank-level" id="bio-fill-bar" style="height: 20%;"></div>
-            </div>
-            <span class="tank-caption" id="bio-fill-text">20%</span>
-          </div>
-
-          <!-- Sensor Controls & Telemetry -->
-          <div class="sensor-metric-list">
-            <!-- Ultrasonic Fill Level -->
-            <div class="metric-item">
-              <div class="metric-header">
-                <span class="name">Ultrasonic Distance (HC-SR04 • GPIO 26/25)</span>
-                <span class="val" id="bio-dist-val">32.0 cm</span>
-              </div>
-              <input type="range" class="sensor-slider" id="bio-fill-slider" min="0" max="100" value="20">
-            </div>
-
-            <!-- Weight (HX711) -->
-            <div class="metric-item">
-              <div class="metric-header">
-                <span class="name">Weight (Load Cell + HX711 • GPIO 16/4)</span>
-                <span class="val" id="bio-weight-val">150 g</span>
-              </div>
-              <input type="range" class="sensor-slider" id="bio-weight-slider" min="0" max="5000" step="10" value="150">
-            </div>
-
-            <!-- Moisture (Capacitive) -->
-            <div class="metric-item">
-              <div class="metric-header">
-                <span class="name">Moisture (Capacitive • GPIO 39 VN)</span>
-                <span class="val" id="bio-moist-val">3400 (DRY)</span>
-              </div>
-              <input type="range" class="sensor-slider" id="bio-moist-slider" min="500" max="4000" value="3400">
-            </div>
-
-            <!-- Metal Proximity Sensor -->
-            <div class="metal-toggle-box">
-              <div class="metal-label">
-                <div style="font-weight: 600; font-size: 0.85rem;">Metal Detected (Inductive • GPIO 18)</div>
-                <div style="font-size: 0.72rem; color: var(--text-dim);">Trigger: Primary error for biodegradable bin</div>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="bio-metal-toggle">
-                <span class="slider-switch"></span>
-              </label>
-            </div>
-          </div>
-        </div>
-      </article>
-
-      <!-- BIN 2: NON-BIODEGRADABLE -->
-      <article class="bin-card nonbio">
-        <div class="bin-header">
-          <div class="bin-title-group">
-            <span class="bin-badge-tag"></span>
-            <h2>Non-Biodegradable Bin</h2>
-          </div>
-          <span class="bin-status-pill normal" id="nonbio-status-pill">STATUS: NORMAL</span>
-        </div>
-
-        <div class="bin-visual-row">
-          <!-- Fill Tank Graphic -->
-          <div class="tank-container">
-            <div class="fill-tank" id="nonbio-tank">
-              <div class="tank-marker full" title="Full threshold: 90%"></div>
-              <div class="tank-marker near" title="Near-full threshold: 75%"></div>
-              <div class="tank-level" id="nonbio-fill-bar" style="height: 25%;"></div>
-            </div>
-            <span class="tank-caption" id="nonbio-fill-text">25%</span>
-          </div>
-
-          <!-- Sensor Controls & Telemetry -->
-          <div class="sensor-metric-list">
-            <!-- Ultrasonic Fill Level -->
-            <div class="metric-item">
-              <div class="metric-header">
-                <span class="name">Ultrasonic Distance (HC-SR04 • GPIO 27/14)</span>
-                <span class="val" id="nonbio-dist-val">30.0 cm</span>
-              </div>
-              <input type="range" class="sensor-slider" id="nonbio-fill-slider" min="0" max="100" value="25">
-            </div>
-
-            <!-- Weight (HX711) -->
-            <div class="metric-item">
-              <div class="metric-header">
-                <span class="name">Weight (Load Cell + HX711 • GPIO 17/5)</span>
-                <span class="val" id="nonbio-weight-val">280 g</span>
-              </div>
-              <input type="range" class="sensor-slider" id="nonbio-weight-slider" min="0" max="5000" step="10" value="280">
-            </div>
-
-            <!-- Moisture (Capacitive) -->
-            <div class="metric-item">
-              <div class="metric-header">
-                <span class="name">Moisture (Capacitive • GPIO 34)</span>
-                <span class="val" id="nonbio-moist-val">3500 (DRY)</span>
-              </div>
-              <input type="range" class="sensor-slider" id="nonbio-moist-slider" min="500" max="4000" value="3500">
-            </div>
-
-            <!-- Metal Proximity Sensor -->
-            <div class="metal-toggle-box">
-              <div class="metal-label">
-                <div style="font-weight: 600; font-size: 0.85rem;">Metal Detected (Inductive • GPIO 19)</div>
-                <div style="font-size: 0.72rem; color: var(--text-dim);">Acceptable: Aluminum cans & foil allowed in dry bin</div>
-              </div>
-              <label class="toggle-switch">
-                <input type="checkbox" id="nonbio-metal-toggle">
-                <span class="slider-switch"></span>
-              </label>
-            </div>
-          </div>
-        </div>
-      </article>
-    </main>
-
-    <!-- Lower Section: Gas Sensor & Evidence Breakdown -->
-    <section class="lower-grid">
-      <!-- Gas Sensor Card (Common Bin Atmosphere) -->
-      <div class="bin-card" style="padding: 20px;">
-        <div class="card-title">
-          <span>MQ-Series Gas Sensor (ADC1_CH0 • GPIO 36 VP)</span>
-          <span style="font-size: 0.75rem; color: var(--accent-gas);">Decomposition Volatiles</span>
-        </div>
-        <div class="metric-item" style="margin-bottom: 14px;">
-          <div class="metric-header">
-            <span class="name">Gas ADC Raw Value (0 - 4095)</span>
-            <span class="val" id="gas-val" style="color: #c084fc;">650</span>
-          </div>
-          <input type="range" class="sensor-slider" id="gas-slider" min="300" max="3500" value="650" style="accent-color: #a855f7;">
-        </div>
-        <div style="font-size: 0.82rem; display: flex; justify-content: space-between; padding: 6px 10px; background: rgba(255,255,255,0.03); border-radius: var(--radius-sm);">
-          <span style="color: var(--text-muted);">Gas Atmosphere Status:</span>
-          <span id="gas-status-text" style="font-weight: 600; color: #a5f3fc;">NORMAL / CLEAN</span>
-        </div>
-        <div style="margin-top: 12px; font-size: 0.78rem; color: var(--text-dim); line-height: 1.4;">
-          <strong>Logic Note:</strong> High gas (>1500) combined with moisture (>1500) in the Non-Biodegradable bin confirms decomposing organic waste deposited into the dry recyclable bin.
-        </div>
+    <!-- Historical Analytics Charts -->
+    <section>
+      <div class="section-title">
+        <span>Historical Sensor Analytics</span>
+        <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
+          Rendered from Actual Backend Records (Zero Fabricated Points)
+        </span>
       </div>
 
-      <!-- Evidence Scoring Engine Card -->
-      <div class="bin-card" style="padding: 20px;">
-        <div class="card-title">
-          <span>Rule-Based Evidence Scoring (detection.cpp)</span>
-          <span style="font-size: 0.75rem; color: var(--text-dim);">Threshold: 30 pts</span>
-        </div>
-        <div class="evidence-score-meter">
-          <!-- Bio Score -->
-          <div>
-            <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px;">
-              <span>Bio Bin Mismatch Evidence Score:</span>
-              <strong id="bio-score-val" style="font-family: 'JetBrains Mono', monospace;">0 / 100</strong>
-            </div>
-            <div class="score-bar-track">
-              <div class="score-bar-fill" id="bio-score-bar" style="width: 0%; background: #10b981;"></div>
-            </div>
-            <div class="evidence-items" id="bio-score-breakdown" style="margin-top: 8px;"></div>
+      <div class="charts-grid">
+        <!-- Weight History Chart -->
+        <article class="chart-card">
+          <h4 style="font-size: 0.9rem; font-weight: 700; color: var(--text-main);">Mass Measurement vs Time (Grams)</h4>
+          <div class="chart-canvas-wrap" id="chart-weight-wrap">
+            <span class="chart-empty-text">No historical weight records available</span>
           </div>
+        </article>
 
-          <!-- Non-Bio Score -->
-          <div style="margin-top: 10px;">
-            <div style="display: flex; justify-content: space-between; font-size: 0.8rem; margin-bottom: 4px;">
-              <span>Non-Bio Bin Mismatch Evidence Score:</span>
-              <strong id="nonbio-score-val" style="font-family: 'JetBrains Mono', monospace;">0 / 100</strong>
-            </div>
-            <div class="score-bar-track">
-              <div class="score-bar-fill" id="nonbio-score-bar" style="width: 0%; background: #3b82f6;"></div>
-            </div>
-            <div class="evidence-items" id="nonbio-score-breakdown" style="margin-top: 8px;"></div>
+        <!-- Moisture History Chart -->
+        <article class="chart-card">
+          <h4 style="font-size: 0.9rem; font-weight: 700; color: var(--text-main);">Soil Moisture vs Time (%)</h4>
+          <div class="chart-canvas-wrap" id="chart-moisture-wrap">
+            <span class="chart-empty-text">No historical moisture records available</span>
           </div>
+        </article>
+      </div>
+    </section>
+
+    <!-- System Diagnostics & Alerts -->
+    <section class="data-card">
+      <div class="section-title">
+        <span>Active System Alerts & Diagnostics</span>
+        <span class="card-pill ok" id="alerts-status-pill">NORMAL</span>
+      </div>
+      <div class="alerts-list" id="alerts-container">
+        <div class="alert-row info">
+          <span>ℹ</span>
+          <span>System running nominal. Awaiting live sensor packet ingestion.</span>
         </div>
       </div>
     </section>
 
-    <!-- Virtual Serial Console (UART Diagnostics & Commands) -->
-    <section class="serial-card">
-      <div class="serial-toolbar">
-        <div style="font-weight: 600; font-size: 0.9rem; color: var(--text-muted); display: flex; align-items: center; gap: 8px;">
-          <span>Live Serial Diagnostics (115200 Baud)</span>
-        </div>
-        <div class="serial-commands">
-          <button class="btn-cmd" id="cmd-tare" title="Tare both load cells (command 't')">[t] Tare Cells</button>
-          <button class="btn-cmd" id="cmd-reset" title="Reset persistence alert filters (command 'r')">[r] Reset Alerts</button>
-          <button class="btn-cmd" id="cmd-csv" title="Toggle CSV format output (command 'v')">[v] Toggle CSV</button>
-          <button class="btn-cmd" id="cmd-clear" title="Clear console log buffer">Clear Log</button>
+    <!-- Interactive Serial Terminal & Commands -->
+    <section class="terminal-card">
+      <div class="terminal-header">
+        <span class="terminal-title">ARDUINO UNO SERIAL TELEMETRY STREAM & COMMANDS</span>
+        <div style="display: flex; gap: 8px;">
+          <button id="cmd-tare" class="btn-header" style="padding: 4px 8px; font-size: 0.72rem; background: #1e293b; color: #fff; border-color: #475569;">
+            Tare Scale ('t')
+          </button>
+          <button id="cmd-open" class="btn-header" style="padding: 4px 8px; font-size: 0.72rem; background: #1e293b; color: #fff; border-color: #475569;">
+            Force Lid Open ('o')
+          </button>
+          <button id="cmd-close" class="btn-header" style="padding: 4px 8px; font-size: 0.72rem; background: #1e293b; color: #fff; border-color: #475569;">
+            Force Lid Close ('x')
+          </button>
+          <button id="cmd-clear" class="btn-header" style="padding: 4px 8px; font-size: 0.72rem; background: #1e293b; color: #fff; border-color: #475569;">
+            Clear
+          </button>
         </div>
       </div>
-      <div class="terminal-box" id="terminal"></div>
+      <div class="terminal-stream" id="terminal-stream">
+[SYSTEM] Intelligent Waste Segregation Analytics Dashboard initialized.
+[SYSTEM] Backend endpoint: http://localhost:8080/api/telemetry/latest
+[SYSTEM] Ready for live telemetry streaming.
+      </div>
     </section>
-
-    <footer class="app-footer">
-      <p>Intelligent Solid Waste Segregation Analysis • Embedded Systems & IoT Engineering Suite</p>
-    </footer>
   </div>
 
   <script src="app.js"></script>

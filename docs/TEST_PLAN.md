@@ -1,119 +1,66 @@
-# Test Plan — Intelligent Solid Waste Segregation System
+# Test Plan & Quality Assurance — Intelligent Waste Segregation Analytics
 
-## Test Stages
+This test plan defines verification stages for the Arduino Uno physical prototype, serial communication bridge, backend telemetry pipeline, and operational dashboard.
 
-### Stage A — Static Checks
+---
 
-| ID | Check | Expected | Method |
-|----|-------|----------|--------|
-| A1 | Project structure complete | All required files present | Manual review |
-| A2 | PlatformIO config valid | Board, framework, libs defined | `pio check` |
-| A3 | No conflicting GPIO assignments | All GPIOs unique per pin mapping | Review config.h vs PIN_MAPPING.md |
-| A4 | No input-only GPIOs used as outputs | GPIOs 34,35,36,39 are input-only | Review config.h |
-| A5 | No flash-connected GPIOs used | GPIOs 6–11 not assigned | Review config.h |
-| A6 | Voltage dividers documented | HC-SR04 echo, gas sensor if needed | Review WIRING_GUIDE.md |
-| A7 | LED resistors specified | 220Ω for each LED | Review WIRING_GUIDE.md |
-| A8 | HX711 not on ordinary ADC pins | Uses dedicated DOUT/SCK GPIO pairs | Review config.h |
+## 1. Test Architecture Overview
 
-### Stage B — Firmware Build
+```
+[Physical Sensors / Uno Firmware]
+       │ (JSON Lines Telemetry via USB)
+       ▼
+[Serial Gateway Bridge (COM3 @ 115200)]
+       │ (HTTP POST /api/telemetry)
+       ▼
+[IoT Backend Server (localhost:8080)]
+       │ (REST API & JSONL Persistence)
+       ▼
+[Operational IoT Dashboard (Browser)]
+```
 
-| ID | Check | Expected | Method |
-|----|-------|----------|--------|
-| B1 | Firmware compiles without errors | Exit code 0 | `pio run` |
-| B2 | No critical warnings | No warning related to type mismatch, overflow | Review build log |
-| B3 | Flash usage within limits | < 80% of partition | Check build summary |
-| B4 | RAM usage within limits | < 80% of available | Check build summary |
+---
 
-### Stage C — Individual Sensor Validation
+## 2. Test Stages & Test Cases
 
-| ID | Sensor | Test | Expected |
-|----|--------|------|----------|
-| C1 | Gas sensor | Read in clean air | Raw value < GAS_THRESHOLD_LOW |
-| C2 | Gas sensor | Expose to organic waste | Raw value increases |
-| C3 | Gas sensor | Disconnect wire | Status = DISCONNECTED |
-| C4 | Moisture Bio | Read in dry air | Level = DRY |
-| C5 | Moisture Bio | Insert in water | Level = WET |
-| C6 | Moisture NonBio | Read in dry air | Level = DRY |
-| C7 | Moisture NonBio | Insert in water | Level = WET |
-| C8 | Metal Bio | No metal near sensor | metalDetected = false |
-| C9 | Metal Bio | Place iron at 1cm | metalDetected = true |
-| C10 | Metal NonBio | No metal near sensor | metalDetected = false |
-| C11 | Metal NonBio | Place iron at 1cm | metalDetected = true |
-| C12 | HX711 Bio | No weight on cell | ~0g after tare |
-| C13 | HX711 Bio | Known 500g weight | Reads 495–505g (after calibration) |
-| C14 | HX711 NonBio | No weight on cell | ~0g after tare |
-| C15 | HX711 NonBio | Known 500g weight | Reads 495–505g |
-| C16 | Level Bio | Empty bin | Fill ≈ 0%, distance ≈ bin depth |
-| C17 | Level Bio | Object at mid-bin | Fill ≈ 50% |
-| C18 | Level NonBio | Empty bin | Fill ≈ 0% |
-| C19 | Level NonBio | Object at mid-bin | Fill ≈ 50% |
-| C20 | Any sensor | Disconnect | Status ≠ SENSOR_OK, not silent zero |
+### Stage A: Hardware Electrical Verification (Pre-Power)
+| Test ID | Objective | Procedure | Acceptance Criteria |
+| :--- | :--- | :--- | :--- |
+| **TC-HW-01** | Power Rail Isolation | Measure resistance between 5V and GND rail on breadboard before power. | Resistance > 10kΩ (no short circuits). |
+| **TC-HW-02** | HX711 Pin Verification | Inspect DOUT connected to D2 and SCK connected to D3. | Firm mechanical connection. |
+| **TC-HW-03** | Ultrasonic Pin Verification | Inspect TRIG to D4 and ECHO to D5. | 5V TTL connections confirmed. |
+| **TC-HW-04** | Servo Common Ground | Verify external power GND is tied to Arduino GND. | 0Ω continuity between grounds. |
 
-### Stage D — Load Cell Calibration Verification
+### Stage B: Firmware Compilation & Telemetry
+| Test ID | Objective | Procedure | Acceptance Criteria |
+| :--- | :--- | :--- | :--- |
+| **TC-FW-01** | PlatformIO Compilation | Execute build for `uno` target. | Clean compilation with zero memory overflow (<32KB Flash, <2KB SRAM). |
+| **TC-FW-02** | Startup Banner Emission | Power Uno and monitor serial output at 115200 baud. | Formatted system identification banner and command guide printed. |
+| **TC-FW-03** | JSON Lines Schema | Capture continuous telemetry stream. | Every record is valid JSON terminating with `\n`. |
+| **TC-FW-04** | Explicit Null Preservation | Observe telemetry before running calibration. | `moist_pct: null` and `weight_g: null` emitted (never fake zeroes). |
 
-| ID | Test | Expected |
-|----|------|----------|
-| D1 | Tare with empty bin | Weight reads 0g (±5g) |
-| D2 | Calibrate with known weight | Factor computed, verified reading |
-| D3 | Remove weight after calibration | Returns to ~0g |
-| D4 | Test with different known weights | Error < 5% |
-| D5 | Repeated readings (10×) | Standard deviation < 10g |
+### Stage C: Sensor Acquisition & Actuation Logic
+| Test ID | Objective | Procedure | Acceptance Criteria |
+| :--- | :--- | :--- | :--- |
+| **TC-SN-01** | Moisture Response | Touch damp paper towel to sensor blade. | Raw ADC drops significantly; calibrated % rises. |
+| **TC-SN-02** | Moisture Disconnect | Unplug wire from Pin A0. | Telemetry reports `moist_ok: false` and fault flag `MOISTURE_OFFLINE`. |
+| **TC-SN-03** | HX711 Response | Apply downward force to load cell platform. | `weight_raw` counts change proportionally. |
+| **TC-SN-04** | Tare Operation | Send serial command `t`. | Subsequent empty reading reads 0.0g. |
+| **TC-SN-05** | Proximity Detection | Place hand 10cm from HC-SR04 for 2 cycles. | `dist_cm` reads ~10cm, `prox: true`, `lid_cmd: "OPEN"`. |
+| **TC-SN-06** | Lid Auto-Close & Cooldown | Remove hand from sensor; wait 4 seconds. | Servo returns to 0° (`lid_cmd: "CLOSED"`), cooldown active for 1.5s. |
 
-### Stage E — Detection Logic Validation
+### Stage D: Backend & Storage Pipeline
+| Test ID | Objective | Procedure | Acceptance Criteria |
+| :--- | :--- | :--- | :--- |
+| **TC-BE-01** | Telemetry Ingestion | `POST /api/telemetry` with sample JSON packet. | HTTP 200 returned; record written to `data/telemetry.jsonl`. |
+| **TC-BE-02** | Latest Telemetry API | `GET /api/telemetry/latest`. | Returns ingested packet with `received_at` server timestamp. |
+| **TC-BE-03** | Device Staleness Detection | Stop sending telemetry for 6 seconds. | `GET /api/health` transitions from `ONLINE` to `STALE`. |
+| **TC-BE-04** | Classification Storage | `POST /api/classification` with Biodegradable record. | Record appended to `data/classifications.jsonl`; counts updated. |
 
-| ID | Scenario | Expected State |
-|----|----------|---------------|
-| E1 | All normal readings | STATE_NORMAL, no alerts |
-| E2 | Metal in bio bin (single reading) | Score ≥ threshold, NO alert (persistence not met) |
-| E3 | Metal in bio bin (sustained) | STATE_POSSIBLE_MISMATCH, alert active |
-| E4 | Wet + gas in non-bio bin | STATE_POSSIBLE_MISMATCH |
-| E5 | Metal in non-bio bin | STATE_NORMAL (metal is normal here) |
-| E6 | Wet item in non-bio, no gas | Score < threshold (wet ≠ biodegradable) |
-| E7 | Bin at 80% full | STATE_BIN_NEAR_CAPACITY |
-| E8 | Bin at 95% full | STATE_BIN_FULL |
-| E9 | Mismatch + bin full simultaneously | Both flags set |
-| E10 | Sensor disconnected | STATE_SENSOR_FAULT |
-| E11 | Load cell uncalibrated | STATE_CALIBRATION_NEEDED |
-| E12 | Remove mismatch condition | Alert clears after persistence decay |
-
-### Stage F — Integrated Hardware Test
-
-| ID | Test | Expected |
-|----|------|----------|
-| F1 | Both bins empty, all sensors connected | Normal state, green LED on |
-| F2 | Drop metal in bio bin | Red LED (bio mismatch) after persistence |
-| F3 | Drop wet organic waste in non-bio bin | Red LED (non-bio mismatch) possible |
-| F4 | Fill bio bin to 80% | Yellow LED on (steady) |
-| F5 | Fill bio bin to 95% | Yellow LED blinking |
-| F6 | Disconnect a sensor | Fault LED blinks, green LED off |
-| F7 | Send 't' via serial | Load cells tare |
-| F8 | Send 'c' via serial | Calibration mode starts |
-| F9 | Send 'v' via serial | Output toggles to CSV format |
-| F10 | Run for 30 minutes | No crashes, memory stable |
-
-### Stage G — Repeatability
-
-| ID | Test | Method |
-|----|------|--------|
-| G1 | Metal detection consistency | Insert/remove metal 10 times |
-| G2 | Weight measurement repeatability | Measure same weight 10 times |
-| G3 | Level sensor consistency | Read same bin level 10 times |
-| G4 | False positive rate | Run 100 normal cycles, count false alerts |
-| G5 | Recovery time | Remove mismatch, count cycles to clear |
-
-## Pass Criteria
-
-- Stage A: All checks pass
-- Stage B: Firmware compiles with no errors, warnings reviewed
-- Stage C: All connected sensors respond correctly
-- Stage D: Weight error < 5% with calibrated load cell
-- Stage E: All detection rules produce expected states
-- Stage F: LEDs, serial output, and commands work as specified
-- Stage G: False positive rate < 5% over 100 cycles
-
-## Notes
-
-- **Do NOT fabricate test results.** Record actual observations.
-- **Disconnected sensors** should report as such, not as zero values.
-- **Detection accuracy** depends on calibration quality and environmental conditions.
-- These sensors **cannot conclusively identify every waste material.**
+### Stage E: Operational Dashboard Integration
+| Test ID | Objective | Procedure | Acceptance Criteria |
+| :--- | :--- | :--- | :--- |
+| **TC-UI-01** | Zero Simulated Data | Load dashboard with backend empty. | Cards display honest "—" / "Awaiting valid sensor reading", zero fake charts. |
+| **TC-UI-02** | Live Card Updates | Stream telemetry packet. | Moisture, weight, proximity, and lid cards update instantly. |
+| **TC-UI-03** | Dual Categories Display | Verify Biodegradable vs Non-Biodegradable. | Displays exact recorded counts and percentages; empty notice if 0. |
+| **TC-UI-04** | Web Serial Direct Connect | Click "Direct USB (Web Serial)" in browser. | Connects directly to Uno COM port and updates dashboard. |

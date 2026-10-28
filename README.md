@@ -1,182 +1,173 @@
-# Intelligent Solid Waste Segregation System
+# Intelligent Waste Segregation Analytics
 
-An ESP32-based sensor system for monitoring waste bins and detecting possible waste segregation errors using gas, moisture, metal, weight, and fill-level sensors.
+An IoT-integrated Smart Waste Segregation Analytics system built for an **Arduino Uno** physical prototype, featuring real-time sensor acquisition, automatic proximity-driven lid actuation, versioned JSON Lines telemetry, a local IoT backend with persistent storage, and a professional light-themed operational dashboard.
+
+---
 
 ## Features
 
-- **Dual-bin monitoring:** Biodegradable and non-biodegradable waste bins
-- **9 sensors:** Gas (1), moisture (2), metal (2), load cell/weight (2), ultrasonic level (2)
-- **Rule-based mismatch detection** with persistence checking to reduce false alerts
-- **5 LED indicators** for system status, mismatch warnings, bin capacity, and sensor faults
-- **Serial diagnostics** with human-readable and CSV output modes
-- **Interactive calibration** for load cells via serial commands
-- **Modular firmware** — sensor acquisition, detection logic, LED control, and output separated
+- **Arduino Uno Firmware (ATmega328P):** Memory-efficient, non-blocking sensor loop optimized for 2KB SRAM.
+- **Physical Sensor Integration:**
+  - **Capacitive Soil Moisture Sensor (Analog A0):** Dual-point calibrated moisture monitoring with raw ADC diagnostic reporting.
+  - **Load Cell + HX711 Amplifier (Digital D2/D3):** Precision mass acquisition with tare and reference weight calibration.
+  - **HC-SR04 Ultrasonic Sensor (Digital D4/D5):** Non-blocking proximity detection for hands-free automatic lid opening.
+  - **Lid Servo Actuator (PWM D6):** Automatic lid opening with debounce, configurable open duration, and anti-flap cooldown.
+- **Strict Two Waste Categories:** Focuses exclusively on **Biodegradable Waste** and **Non-Biodegradable Waste**.
+- **Real-Time Structured Telemetry:** Emits structured JSON Lines at 115200 baud with sequence numbering, uptime, explicit null handling, and active fault detection.
+- **Production IoT Backend & Storage:** Native REST API and persistent JSONL data logging (`data/telemetry.jsonl`, `data/lid_events.jsonl`, `data/classifications.jsonl`).
+- **Data-Driven Operational Dashboard:** Restrained, light environmental aesthetic (Forest green `#15803d`, off-white `#f8fafc`). Shows only genuine sensor readings and honest empty states—no fabricated charts or simulated slider data.
+- **Dual Connectivity Modes:** Supports remote gateway monitoring over HTTP as well as direct USB connection in-browser via the Web Serial API.
 
-## Hardware Requirements
+---
 
-| Component | Qty | Purpose |
-|-----------|-----|---------|
-| ESP32 DevKit V1 | 1 | Main controller |
-| MQ-series gas sensor | 1 | Gas/VOC detection |
-| Capacitive moisture sensor | 2 | Moisture in each bin |
-| Inductive proximity sensor | 2 | Metal detection in each bin |
-| Load cell (5kg–10kg bar type) | 2 | Weight measurement |
-| HX711 amplifier module | 2 | Load cell interface |
-| HC-SR04 ultrasonic sensor | 2 | Bin fill level |
-| LEDs (Red×3, Green×1, Yellow×1) | 5 | Visual indicators |
-| Resistors (220Ω×5, 1kΩ×2, 2kΩ×2) | 9 | Current limiting, voltage dividers |
-| Breadboard + jumper wires | - | Prototyping |
+## Hardware Specifications
 
-See [`docs/WIRING_GUIDE.md`](docs/WIRING_GUIDE.md) for complete assembly instructions.
+| Component | Arduino Uno Pin | Operating Voltage | Function |
+| :--- | :--- | :--- | :--- |
+| **Arduino Uno R3** | — | 5.0V (USB / DC) | Central microcontroller (16MHz ATmega328P) |
+| **Capacitive Moisture Sensor** | Analog Pin A0 | 5.0V | Soil/waste moisture measurement |
+| **HX711 Amplifier (Load Cell)**| D2 (DOUT), D3 (SCK) | 5.0V | Platform mass measurement |
+| **HC-SR04 Ultrasonic Sensor** | D4 (TRIG), D5 (ECHO)| 5.0V | Approaching object proximity detection |
+| **Lid Servo Motor (SG90/MG90S)**| D6 (PWM) | 5.0V | Automatic lid opening mechanism |
+| **Proximity Active LED** | Digital Pin D7 | 5.0V (via 220Ω) | Amber indicator (lid open / proximity) |
+| **Fault Indicator LED** | Digital Pin D8 | 5.0V (via 220Ω) | Red indicator (sensor timeout) |
+| **System Heartbeat LED** | Digital Pin D13 | 5.0V (onboard) | Periodic 500ms heartbeat blink |
 
-## Software Requirements
+See [`docs/PIN_MAPPING.md`](docs/PIN_MAPPING.md) and [`docs/WIRING_GUIDE.md`](docs/WIRING_GUIDE.md) for full schematics and electrical safety rules.
 
-- [PlatformIO](https://platformio.org/) (CLI or VS Code extension)
-- USB driver for your ESP32 board (CP2102 or CH340)
+---
 
-## Quick Start
+## Quick Start Guide
 
-### 1. Install PlatformIO
-
+### 1. Build and Upload Firmware
+With PlatformIO installed and your Arduino Uno connected via USB:
 ```bash
-# Option A: VS Code Extension
-# Install "PlatformIO IDE" from VS Code Extensions marketplace
+# Build firmware for Arduino Uno
+pio run -e uno
 
-# Option B: CLI
-pip install platformio
+# Upload to connected Arduino Uno
+pio run -e uno --target upload
 ```
 
-### 2. Clone / Open Project
+### 2. Start the IoT Backend & Operational Dashboard
+Launch the unified server using PowerShell (native on Windows, zero dependencies):
+```powershell
+powershell -ExecutionPolicy Bypass -File backend\server.ps1 -Port 8080
+```
+Open your browser to: **[http://localhost:8080/](http://localhost:8080/)**
 
-Open this directory in VS Code with PlatformIO, or navigate to it in terminal.
+*(Alternatively, run using Node.js: `node backend/server.js`)*
 
-### 3. Build Firmware
+### 3. Connect Telemetry
+You have two options for connecting hardware telemetry to the dashboard:
 
-```bash
-pio run
+#### Option A: Direct Web Serial (No Gateway Required)
+1. Open the dashboard in Google Chrome, Microsoft Edge, or Opera.
+2. Click the **"Direct USB (Web Serial)"** button in the header.
+3. Select your Arduino Uno USB COM port from the prompt.
+4. The dashboard immediately starts streaming live physical sensor readings.
+
+#### Option B: Dedicated Serial Gateway Bridge
+Run the gateway in a second terminal window to forward USB serial packets to the backend:
+```powershell
+powershell -ExecutionPolicy Bypass -File gateway\serial_gateway.ps1 -ComPort COM3 -BaudRate 115200
 ```
 
-### 4. Upload to ESP32
+---
 
-Connect ESP32 via USB, then:
+## Interactive Serial Commands
 
-```bash
-pio run --target upload
-```
+Open the Serial Monitor or use the Dashboard Diagnostic Console at 115200 baud:
 
-### 5. Open Serial Monitor
-
-```bash
-pio device monitor
-```
-
-Baud rate: **115200**
-
-### 6. Calibrate Sensors
-
-After upload, the system will:
-1. Run LED self-test (each LED blinks sequentially)
-2. Wait for gas sensor warm-up (30 seconds)
-3. Begin monitoring
-
-**Send these serial commands:**
 | Command | Action |
-|---------|--------|
-| `t` | Tare (zero) both load cells |
-| `c` | Enter interactive calibration mode |
-| `r` | Reset mismatch alert counters |
-| `v` | Toggle CSV output mode |
-| `h` | Print help |
+| :--- | :--- |
+| `t` | Tare HX711 load cell (zero point) |
+| `c` | Interactive load cell calibration with a known reference weight in grams |
+| `m` | Dual-point moisture calibration (Air Raw 0% vs Water Raw 100%) |
+| `o` | Force lid actuator to OPEN position (90°) |
+| `x` | Force lid actuator to CLOSED position (0°) |
+| `h` | Print serial command menu |
 
-See [`docs/CALIBRATION_GUIDE.md`](docs/CALIBRATION_GUIDE.md) for detailed calibration procedures.
+See [`docs/CALIBRATION_GUIDE.md`](docs/CALIBRATION_GUIDE.md) for detailed sensor tuning instructions.
+
+---
+
+## Telemetry Protocol (JSON Lines)
+
+The Arduino Uno emits UTF-8 JSON Lines over UART at 115200 baud:
+```json
+{
+  "v": 1,
+  "dev": "UNO-WS01",
+  "seq": 142,
+  "up": 284,
+  "moist_raw": 345,
+  "moist_pct": 78.5,
+  "moist_ok": true,
+  "moist_cal": true,
+  "weight_g": 245.0,
+  "weight_raw": 102900,
+  "weight_ok": true,
+  "weight_cal": true,
+  "dist_cm": 14.1,
+  "prox": true,
+  "lid_cmd": "OPEN",
+  "faults": []
+}
+```
+*Note: Uncalibrated or disconnected sensors explicitly emit `null` rather than simulated or fabricated zeroes.*  
+See [`docs/TELEMETRY_PROTOCOL.md`](docs/TELEMETRY_PROTOCOL.md) for full protocol specifications.
+
+---
 
 ## Project Structure
 
 ```
 Intelligent Waste Segretion/
-├── platformio.ini              # PlatformIO build configuration
-├── README.md                   # This file
-├── PROJECT_STATUS.md           # Current progress and blockers
-├── IMPLEMENTATION_PLAN.md      # Milestones and acceptance criteria
-├── Report.pdf                  # Project report (specification)
+├── platformio.ini              # PlatformIO config targeting Arduino Uno (atmega328p)
+├── README.md                   # System documentation & quickstart
+├── PROJECT_STATUS.md           # Implementation audit & verification status
 ├── include/
-│   ├── config.h                # Pin mapping, thresholds, all configuration
-│   ├── sensor_types.h          # Data structures and enums
-│   ├── sensors.h               # Sensor acquisition interface
-│   ├── detection.h             # Mismatch detection interface
-│   ├── leds.h                  # LED control interface
-│   └── serial_output.h         # Serial diagnostics interface
+│   ├── config.h                # Arduino Uno pin assignments, calibration defaults, timing
+│   ├── sensor_types.h          # Data structures for 2 waste categories & telemetry
+│   ├── sensors.h               # Active sensor reading and lid state machine interface
+│   ├── detection.h             # Two-category waste evaluation interface
+│   ├── leds.h                  # Hardware LED status indicators
+│   └── serial_output.h         # JSON Lines protocol and command handler interface
 ├── src/
-│   ├── main.cpp                # Application entry point and main loop
-│   ├── sensors.cpp             # Sensor read implementations
-│   ├── detection.cpp           # Mismatch detection logic
-│   ├── leds.cpp                # LED state management
-│   └── serial_output.cpp       # Serial output formatting
-├── test/
-│   ├── test_detection.cpp      # Host-side unit tests for detection logic
-│   └── run_tests.ps1           # Automated test execution script
-├── lib/                        # External libraries (managed by PlatformIO)
-├── docs/
-│   ├── PIN_MAPPING.md          # GPIO assignments and safety notes
-│   ├── WIRING_GUIDE.md         # Step-by-step assembly instructions
-│   ├── LED_LOGIC.md            # LED state table and behaviour
-│   ├── CALIBRATION_GUIDE.md    # Sensor calibration procedures
-│   ├── TEST_PLAN.md            # Test stages and test cases
-│   └── TEST_RESULTS_TEMPLATE.md # Blank template for recording results
+│   ├── main.cpp                # Application entry point and non-blocking 1Hz loop
+│   ├── sensors.cpp             # Moisture, HX711, ultrasonic, and lid servo logic
+│   ├── detection.cpp           # Two-category evaluation logic
+│   ├── leds.cpp                # Diagnostic LED driver implementation
+│   └── serial_output.cpp       # Zero-allocation JSON Lines emitter and commands
+├── backend/
+│   ├── server.ps1              # Native PowerShell/.NET HTTP REST & data storage server
+│   └── server.js               # Cross-platform Node.js IoT backend alternative
+├── gateway/
+│   └── serial_gateway.ps1      # USB COM port to HTTP telemetry forwarder
 ├── simulation/
-│   ├── diagram.json            # Wokwi ESP32 circuit schematic
-│   ├── README.md               # Simulation execution guide
-│   ├── simulate_system.py      # Python batch simulation suite
-│   └── dashboard/              # Interactive Digital Twin & Web Serial app
-│       ├── index.html
-│       ├── styles.css
-│       └── app.js
-└── wokwi.toml                  # Wokwi IDE configuration
+│   └── dashboard/              # Production light-themed environmental IoT dashboard
+│       ├── index.html          # Semantic HTML5 operational dashboard
+│       ├── styles.css          # Restrained environmental design (Forest green / Off-white)
+│       ├── app.js              # Data-driven client (Web Serial + REST API polling)
+│       └── serve.ps1           # Wrapper to launch backend server
+├── data/                       # Persistent JSON Lines telemetry & event logs
+│   ├── telemetry.jsonl         # Recorded genuine sensor telemetry
+│   ├── lid_events.jsonl        # Recorded proximity & lid actuation transitions
+│   └── classifications.jsonl  # Recorded verified waste classification events
+├── test/
+│   ├── test_detection.cpp      # Host-side unit tests for 2-category logic
+│   └── run_tests.ps1           # Test runner for schemas, tests, and asset checks
+└── docs/
+    ├── PIN_MAPPING.md          # Complete Arduino Uno pin mapping & electrical characteristics
+    ├── WIRING_GUIDE.md         # Breadboard wiring and assembly instructions
+    ├── CALIBRATION_GUIDE.md    # Dual-point moisture and load-cell calibration workflow
+    ├── TELEMETRY_PROTOCOL.md   # Versioned JSON Lines protocol specification
+    └── TEST_PLAN.md            # Hardware, firmware, backend, and frontend test plan
 ```
 
-## Detection Logic
-
-### Biodegradable Bin
-- **Metal detected** → Primary mismatch indicator (non-biodegradable item)
-- **Dry material + metal + no gas** → Stronger evidence of mismatch
-- **Absence of metal** does NOT prove waste is biodegradable
-
-### Non-Biodegradable Bin
-- **High moisture + elevated gas** → Possible biodegradable material
-- **Metal detection is NORMAL** in this bin (not an error)
-- **Wet item alone** does NOT automatically classify as biodegradable
-- **Dry item alone** does NOT automatically classify as non-biodegradable
-
-### Important Limitations
-- These sensors **cannot conclusively identify every waste material**
-- Evidence scores are **heuristic indicators**, not validated probabilities
-- False positives and false negatives are expected
-- Persistence checking (3 consecutive cycles) reduces transient false alerts
-
-## Documentation
-
-| Document | Contents |
-|----------|----------|
-| [Pin Mapping](docs/PIN_MAPPING.md) | GPIO assignments, voltage safety, power requirements |
-| [Wiring Guide](docs/WIRING_GUIDE.md) | Component list, step-by-step wiring, safety checklist |
-| [LED Logic](docs/LED_LOGIC.md) | LED state table, priority rules, blinking patterns |
-| [Calibration Guide](docs/CALIBRATION_GUIDE.md) | Procedures for all sensors |
-| [Test Plan](docs/TEST_PLAN.md) | 7 test stages, 40+ test cases |
-| [Test Results](docs/TEST_RESULTS_TEMPLATE.md) | Blank template for recording outcomes |
-
-## Troubleshooting
-
-| Symptom | Likely Cause | Fix |
-|---------|-------------|-----|
-| No serial output | Wrong baud rate or port | Set 115200, check COM port |
-| All sensors DISCONNECTED | Wiring issue | Check connections per WIRING_GUIDE |
-| Weight always 0 | HX711 not connected | Check DOUT/SCK wires |
-| Weight very wrong | Not calibrated | Run calibration (send `c`) |
-| Gas sensor reads 0 | Still warming up | Wait 30 seconds |
-| Level shows -1 | Ultrasonic not connected | Check TRIG/ECHO + voltage divider |
-| ESP32 won't boot | GPIO conflict at boot | Check pin mapping against safe pins |
-| LEDs don't light | Missing resistor or wrong pin | Check LED wiring and polarity |
+---
 
 ## License
 
-This project is developed as an academic project for educational purposes.
+Developed as an academic engineering project for educational and research purposes.

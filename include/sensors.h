@@ -1,10 +1,12 @@
 /**
  * @file sensors.h
- * @brief Sensor acquisition module interface
+ * @brief Sensor acquisition and lid actuation interface for Arduino Uno prototype
  *
- * Provides functions to initialise and read all sensors:
- * gas, moisture, metal, weight (HX711), and bin level (ultrasonic).
- * All functions return structured data with status indicators.
+ * Provides functions for:
+ *   - Capacitive moisture sensing with 2-point calibration
+ *   - HX711 load cell weight reading and interactive calibration
+ *   - HC-SR04 ultrasonic proximity detection for automatic lid opening
+ *   - Non-blocking lid servo state machine with debounce and cooldown
  */
 
 #ifndef SENSORS_H
@@ -15,53 +17,34 @@
 // ============================================================================
 // INITIALIZATION
 // ============================================================================
-
-/** Initialise all sensor interfaces (GPIO modes, HX711, etc.) */
 void sensors_init();
 
-/** Check if gas sensor warm-up period has elapsed */
-bool sensors_gasWarmupComplete();
+// ============================================================================
+// SENSOR ACQUISITION
+// ============================================================================
+MoistureReading  sensors_readMoisture();
+WeightReading    sensors_readWeight();
+ProximityReading sensors_readProximity();
+SystemTelemetry  sensors_captureTelemetry();
 
 // ============================================================================
-// INDIVIDUAL SENSOR READS
+// CALIBRATION INTERFACE
 // ============================================================================
+void  sensors_tareWeight();
+void  sensors_setWeightCalibration(float factor);
+float sensors_getWeightCalibration();
+bool  sensors_isWeightCalibrated();
 
-/** Read the gas sensor (shared between both bins) */
-GasReading sensors_readGas();
-
-/** Read a moisture sensor for the specified bin */
-MoistureReading sensors_readMoisture(BinType bin);
-
-/** Read a metal sensor for the specified bin */
-MetalReading sensors_readMetal(BinType bin);
-
-/** Read weight from HX711 for the specified bin */
-WeightReading sensors_readWeight(BinType bin);
-
-/** Read bin level from ultrasonic sensor for the specified bin */
-LevelReading sensors_readLevel(BinType bin);
+void  sensors_setMoistureCalibration(int airRaw, int waterRaw);
+bool  sensors_isMoistureCalibrated();
+int   sensors_getMoistureAirRaw();
+int   sensors_getMoistureWaterRaw();
 
 // ============================================================================
-// AGGREGATED READ
+// AUTOMATIC LID ACTUATION & STATE MACHINE
 // ============================================================================
-
-/**
- * Read all sensors and return complete system data.
- * This is the primary function called from the main loop.
- */
-SystemData sensors_readAll();
-
-// ============================================================================
-// CALIBRATION
-// ============================================================================
-
-/** Tare (zero) the load cell for the specified bin */
-void sensors_tareWeight(BinType bin);
-
-/** Set calibration factor for the specified bin's load cell */
-void sensors_setCalibrationFactor(BinType bin, float factor);
-
-/** Get current calibration factor for the specified bin */
-float sensors_getCalibrationFactor(BinType bin);
+void     sensors_controlLid(LidCommandState cmd);
+LidState sensors_getLidState();
+bool     sensors_updateLidStateMachine(); // Returns true if state changed
 
 #endif // SENSORS_H

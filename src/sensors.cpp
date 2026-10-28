@@ -1,409 +1,346 @@
 /**
  * @file sensors.cpp
- * @brief Sensor acquisition implementation
+ * @brief Sensor acquisition and lid actuation implementation for Arduino Uno prototype
  *
- * Reads all sensors: gas, moisture (×2), metal (×2), weight/HX711 (×2),
- * and bin level/ultrasonic (×2). Returns structured data with validity
- * status for each reading.
- *
- * IMPORTANT: Sensor failures are explicitly reported through SensorStatus,
- * not silently converted to zero values.
+ * Implements:
+ *   - Capacitive moisture sensing with 2-point calibration
+ *   - HX711 load cell weight reading and tare/scale calibration
+ *   - HC-SR04 ultrasonic proximity detection for automatic lid opening
+ *   - Non-blocking lid servo state machine with debounce and cooldown
  */
 
 #include "sensors.h"
 #include "config.h"
 #include <HX711.h>
+#include <Servo.h>
 
 // ============================================================================
-// MODULE STATE
+// MODULE HARDWARE INSTANCES & STATE
 // ============================================================================
+static HX711 hx711;
+static Servo lidServo;
 
-// HX711 instances for both load cells
-static HX711 hx711Bio;
-static HX711 hx711NonBio;
+// Calibration state
+static float weightCalibrationFactor = HX711_CALIBRATION_FACTOR_DEFAULT;
+static bool  isWeightCalibratedState = false;
 
-// Calibration factors (initialised from config defaults)
-static float calibFactorBio    = HX711_BIO_CALIBRATION_FACTOR;
-static float calibFactorNonBio = HX711_NONBIO_CALIBRATION_FACTOR;
+static int   moistureAirRawDefault   = MOISTURE_RAW_AIR_DEFAULT;
+static int   moistureWaterRawDefault = MOISTURE_RAW_WATER_DEFAULT;
+static bool  isMoistureCalibratedState = false;
 
-// Calibration status
-static bool isCalibratedBio    = false; // Will be true after user calibration
-static bool isCalibratedNonBio = false;
+// Lid state machine variables
+static LidState lidState = {
+    LID_CLOSED,
+    false, // hasPhysicalFeedback (no limit switch or encoder installed)
+    false, // physicalClosedVerified
+    false, // physicalOpenVerified
+    0      // stateChangeTimestampMs
+};
 
-// Gas sensor warm-up tracking
-static unsigned long gasWarmupStartMs = 0;
-
-// ============================================================================
-// INTERNAL HELPERS
-// ============================================================================
-
-/**
- * Read an analog pin with averaging to reduce noise.
- * Returns the averaged raw ADC value (0–4095).
- */
-static int readAnalogAvg(int pin, int samples = ANALOG_AVG_SAMPLES) {
-    long sum = 0;
-    int validCount = 0;
-    for (int i = 0; i < samples; i++) {
-        int val = analogRead(pin);
-        // Basic sanity: ESP32 ADC returns 0–4095
-        if (val >= 0 && val <= 4095) {
-            sum += val;
-            validCount++;
-        }
-        delayMicroseconds(200); // Small delay between samples
-    }
-    if (validCount == 0) return -1; // All reads failed
-    return (int)(sum / validCount);
-}
-
-/**
- * Read ultrasonic distance using HC-SR04 trigger/echo pattern.
- * Returns distance in centimetres, or -1.0 if timeout/error.
- *
- * Speed of sound ≈ 343 m/s = 0.0343 cm/µs
- * Round trip: distance = (pulse_us * 0.0343) / 2
- */
-static float readUltrasonicCm(int trigPin, int echoPin) {
-    // Ensure trigger is low
-    digitalWrite(trigPin, LOW);
-    delayMicroseconds(2);
-
-    // Send 10µs trigger pulse
-    digitalWrite(trigPin, HIGH);
-    delayMicroseconds(10);
-    digitalWrite(trigPin, LOW);
-
-    // Measure echo pulse duration
-    unsigned long duration = pulseIn(echoPin, HIGH, ULTRASONIC_TIMEOUT_US);
-
-    if (duration == 0) {
-        return -1.0f; // Timeout — no echo received
-    }
-
-    float distanceCm = (duration * 0.0343f) / 2.0f;
-
-    // Validate range
-    if (distanceCm < ULTRASONIC_MIN_DISTANCE_CM ||
-        distanceCm > ULTRASONIC_MAX_DISTANCE_CM) {
-        return -1.0f; // Out of valid range
-    }
-
-    return distanceCm;
-}
-
-/**
- * Convert distance reading to fill percentage.
- * Sensor is mounted at the top of the bin looking down.
- * Empty bin: distance ≈ BIN_DEPTH_CM (maximum distance)
- * Full bin:  distance ≈ 0 (waste surface near sensor)
- */
-static float distanceToFillPercent(float distanceCm) {
-    if (distanceCm < 0) return -1.0f;
-    float fillPct = ((BIN_DEPTH_CM - distanceCm) / BIN_DEPTH_CM) * 100.0f;
-    // Clamp to 0–100%
-    if (fillPct < 0.0f) fillPct = 0.0f;
-    if (fillPct > 100.0f) fillPct = 100.0f;
-    return fillPct;
-}
+static uint8_t  proximityDebounceCounter = 0;
+static unsigned long lidHoldTimerStartMs = 0;
+static unsigned long lidClosedTimestampMs = 0;
+static unsigned long telemetrySequenceCounter = 0;
 
 // ============================================================================
 // INITIALIZATION
 // ============================================================================
-
 void sensors_init() {
-    // --- Analog inputs ---
-    // ESP32 analog pins don't require explicit pinMode for analogRead,
-    // but we set resolution explicitly.
-    analogReadResolution(12); // 12-bit ADC: 0–4095
+    // 1. Analog Moisture Sensor pin configuration
+    pinMode(PIN_MOISTURE_ANALOG, INPUT);
 
-    // --- Gas sensor digital pin (optional) ---
-    pinMode(GAS_SENSOR_DIGITAL_PIN, INPUT);
+    // 2. Ultrasonic Sensor pins
+    pinMode(PIN_ULTRASONIC_TRIG, OUTPUT);
+    pinMode(PIN_ULTRASONIC_ECHO, INPUT);
+    digitalWrite(PIN_ULTRASONIC_TRIG, LOW);
 
-    // --- Metal sensor digital inputs ---
-    // Enable internal pull-up if sensors are open-collector (NPN)
-    if (METAL_ACTIVE_LOW) {
-        pinMode(METAL_BIO_PIN, INPUT_PULLUP);
-        pinMode(METAL_NONBIO_PIN, INPUT_PULLUP);
+    // 3. Status LEDs
+    pinMode(PIN_LED_HEARTBEAT, OUTPUT);
+    pinMode(PIN_LED_PROXIMITY, OUTPUT);
+    pinMode(PIN_LED_FAULT, OUTPUT);
+    digitalWrite(PIN_LED_HEARTBEAT, LOW);
+    digitalWrite(PIN_LED_PROXIMITY, LOW);
+    digitalWrite(PIN_LED_FAULT, LOW);
+
+    // 4. Lid Servo Initialization
+    lidServo.attach(PIN_LID_SERVO);
+    lidServo.write(LID_SERVO_CLOSED_ANGLE);
+    lidState.commandState = LID_CLOSED;
+    lidState.stateChangeTimestampMs = millis();
+
+    // 5. HX711 Load Cell Initialization
+    hx711.begin(PIN_HX711_DOUT, PIN_HX711_SCK);
+    hx711.set_scale(weightCalibrationFactor);
+
+    if (hx711.wait_ready_timeout(HX711_TIMEOUT_MS)) {
+        hx711.tare(HX711_AVG_SAMPLES);
     } else {
-        pinMode(METAL_BIO_PIN, INPUT);
-        pinMode(METAL_NONBIO_PIN, INPUT);
+        digitalWrite(PIN_LED_FAULT, HIGH);
     }
-
-    // --- Ultrasonic trigger pins (output) ---
-    pinMode(LEVEL_BIO_TRIG_PIN, OUTPUT);
-    pinMode(LEVEL_NONBIO_TRIG_PIN, OUTPUT);
-    digitalWrite(LEVEL_BIO_TRIG_PIN, LOW);
-    digitalWrite(LEVEL_NONBIO_TRIG_PIN, LOW);
-
-    // --- Ultrasonic echo pins (input) ---
-    pinMode(LEVEL_BIO_ECHO_PIN, INPUT);
-    pinMode(LEVEL_NONBIO_ECHO_PIN, INPUT);
-
-    // --- HX711 load cell amplifiers ---
-    hx711Bio.begin(HX711_BIO_DOUT_PIN, HX711_BIO_SCK_PIN);
-    hx711NonBio.begin(HX711_NONBIO_DOUT_PIN, HX711_NONBIO_SCK_PIN);
-
-    // Set initial scale factors (placeholder — must calibrate)
-    hx711Bio.set_scale(calibFactorBio);
-    hx711NonBio.set_scale(calibFactorNonBio);
-
-    // Tare on startup (assumes bins are empty at power-on)
-    // If bins are not empty at startup, call sensors_tareWeight() manually
-    if (hx711Bio.wait_ready_timeout(HX711_TIMEOUT_MS)) {
-        hx711Bio.tare(HX711_AVG_READINGS);
-        Serial.println(F("[SENSORS] HX711 Bio: Tared on startup"));
-    } else {
-        Serial.println(F("[SENSORS] HX711 Bio: NOT RESPONDING — check wiring"));
-    }
-
-    if (hx711NonBio.wait_ready_timeout(HX711_TIMEOUT_MS)) {
-        hx711NonBio.tare(HX711_AVG_READINGS);
-        Serial.println(F("[SENSORS] HX711 NonBio: Tared on startup"));
-    } else {
-        Serial.println(F("[SENSORS] HX711 NonBio: NOT RESPONDING — check wiring"));
-    }
-
-    // --- Gas sensor warm-up tracking ---
-    gasWarmupStartMs = millis();
-    Serial.println(F("[SENSORS] Gas sensor warm-up started"));
-
-    Serial.println(F("[SENSORS] All sensors initialised"));
-}
-
-bool sensors_gasWarmupComplete() {
-    return (millis() - gasWarmupStartMs) >= GAS_WARMUP_TIME_MS;
 }
 
 // ============================================================================
-// INDIVIDUAL SENSOR READS
+// CAPACITIVE MOISTURE SENSING
 // ============================================================================
-
-GasReading sensors_readGas() {
-    GasReading reading;
-    reading.rawValue = readAnalogAvg(GAS_SENSOR_ANALOG_PIN);
-    reading.digitalState = digitalRead(GAS_SENSOR_DIGITAL_PIN);
-
-    if (reading.rawValue < 0) {
-        reading.status = SENSOR_DISCONNECTED;
-        reading.aboveThreshold = false;
-    } else if (!sensors_gasWarmupComplete()) {
-        reading.status = SENSOR_WARMING_UP;
-        reading.aboveThreshold = false;
-    } else {
-        reading.status = SENSOR_OK;
-        reading.aboveThreshold = (reading.rawValue >= GAS_THRESHOLD_HIGH);
-    }
-
-    return reading;
-}
-
-MoistureReading sensors_readMoisture(BinType bin) {
+MoistureReading sensors_readMoisture() {
     MoistureReading reading;
-    int pin = (bin == BIN_BIODEGRADABLE) ? MOISTURE_BIO_PIN : MOISTURE_NONBIO_PIN;
+    reading.isCalibrated = isMoistureCalibratedState;
 
-    reading.rawValue = readAnalogAvg(pin);
+    // Average 5 analog samples for electrical noise suppression
+    long sum = 0;
+    for (int i = 0; i < 5; i++) {
+        sum += analogRead(PIN_MOISTURE_ANALOG);
+        delayMicroseconds(100);
+    }
+    reading.rawValue = (int)(sum / 5);
 
-    if (reading.rawValue < 0) {
+    // Physical sanity check for hardware disconnect / short
+    if (reading.rawValue < MOISTURE_ADC_MIN_VALID || reading.rawValue > MOISTURE_ADC_MAX_VALID) {
         reading.status = SENSOR_DISCONNECTED;
-        reading.level = MOISTURE_UNKNOWN;
+        reading.calibratedPct = 0.0f;
         return reading;
     }
 
-    reading.status = SENSOR_OK;
-
-    // Interpret moisture level based on sensor polarity
-    int effectiveValue = reading.rawValue;
-    if (MOISTURE_POLARITY_INVERTED) {
-        // For capacitive sensors: lower raw value = more moisture
-        // Compare raw directly (lower = wetter)
-        if (effectiveValue <= MOISTURE_THRESHOLD_WET) {
-            reading.level = MOISTURE_WET;
-        } else if (effectiveValue >= MOISTURE_THRESHOLD_DRY) {
-            reading.level = MOISTURE_DRY;
-        } else {
-            reading.level = MOISTURE_INTERMEDIATE;
-        }
+    if (!isMoistureCalibratedState) {
+        // Uncalibrated state: provide raw ADC, refuse to fabricate percentage
+        reading.status = SENSOR_NOT_CALIBRATED;
+        reading.calibratedPct = 0.0f;
     } else {
-        // For resistive sensors: higher raw value = more moisture
-        if (effectiveValue >= MOISTURE_THRESHOLD_DRY) {
-            reading.level = MOISTURE_WET;
-        } else if (effectiveValue <= MOISTURE_THRESHOLD_WET) {
-            reading.level = MOISTURE_DRY;
+        // Dual-point calibrated percentage calculation
+        // Capacitive sensor: raw decreases as moisture increases (airRaw > waterRaw)
+        if (moistureAirRawDefault <= moistureWaterRawDefault) {
+            reading.status = SENSOR_NOT_CALIBRATED;
+            reading.calibratedPct = 0.0f;
         } else {
-            reading.level = MOISTURE_INTERMEDIATE;
+            float pct = ((float)(moistureAirRawDefault - reading.rawValue) /
+                         (float)(moistureAirRawDefault - moistureWaterRawDefault)) * 100.0f;
+            if (pct < 0.0f) pct = 0.0f;
+            if (pct > 100.0f) pct = 100.0f;
+            reading.calibratedPct = pct;
+            reading.status = SENSOR_OK;
         }
     }
 
     return reading;
 }
 
-MetalReading sensors_readMetal(BinType bin) {
-    MetalReading reading;
-    int pin = (bin == BIN_BIODEGRADABLE) ? METAL_BIO_PIN : METAL_NONBIO_PIN;
-
-    reading.rawPinState = digitalRead(pin);
-    reading.status = SENSOR_OK;
-
-    // Apply polarity correction
-    if (METAL_ACTIVE_LOW) {
-        // Active LOW: pin LOW means metal detected
-        reading.metalDetected = (reading.rawPinState == LOW);
-    } else {
-        // Active HIGH: pin HIGH means metal detected
-        reading.metalDetected = (reading.rawPinState == HIGH);
-    }
-
-    return reading;
-}
-
-WeightReading sensors_readWeight(BinType bin) {
+// ============================================================================
+// HX711 LOAD CELL SENSING
+// ============================================================================
+WeightReading sensors_readWeight() {
     WeightReading reading;
-    HX711& hx = (bin == BIN_BIODEGRADABLE) ? hx711Bio : hx711NonBio;
-    bool calibrated = (bin == BIN_BIODEGRADABLE) ? isCalibratedBio : isCalibratedNonBio;
+    reading.isCalibrated = isWeightCalibratedState;
 
-    reading.isCalibrated = calibrated;
-
-    // Check if HX711 is responding
-    if (!hx.wait_ready_timeout(HX711_TIMEOUT_MS)) {
+    if (!hx711.wait_ready_timeout(HX711_TIMEOUT_MS)) {
         reading.status = SENSOR_TIMEOUT;
         reading.weightGrams = 0.0f;
         reading.rawValue = 0;
         return reading;
     }
 
-    // Get averaged reading
-    reading.rawValue = hx.read_average(HX711_AVG_READINGS);
-    reading.weightGrams = hx.get_units(HX711_AVG_READINGS);
+    reading.rawValue = hx711.read_average(HX711_AVG_SAMPLES);
 
-    // Validate reading
-    if (reading.weightGrams < -WEIGHT_MIN_VALID_GRAMS) {
-        // Significant negative weight: likely needs re-taring
+    if (!isWeightCalibratedState) {
         reading.status = SENSOR_NOT_CALIBRATED;
-    } else if (reading.weightGrams > WEIGHT_MAX_CAPACITY_GRAMS) {
-        // Exceeds expected maximum
-        reading.status = SENSOR_OUT_OF_RANGE;
-    } else if (!calibrated) {
-        reading.status = SENSOR_NOT_CALIBRATED;
-    } else {
-        reading.status = SENSOR_OK;
-    }
-
-    // Clamp small negatives to zero (normal tare drift)
-    if (reading.weightGrams < 0.0f && reading.weightGrams > -WEIGHT_MIN_VALID_GRAMS) {
-        reading.weightGrams = 0.0f;
-    }
-
-    return reading;
-}
-
-LevelReading sensors_readLevel(BinType bin) {
-    LevelReading reading;
-
-    int trigPin, echoPin;
-    if (bin == BIN_BIODEGRADABLE) {
-        trigPin = LEVEL_BIO_TRIG_PIN;
-        echoPin = LEVEL_BIO_ECHO_PIN;
-    } else {
-        trigPin = LEVEL_NONBIO_TRIG_PIN;
-        echoPin = LEVEL_NONBIO_ECHO_PIN;
-    }
-
-    // Average multiple ultrasonic readings for stability
-    float totalDist = 0.0f;
-    int validReadings = 0;
-    const int NUM_LEVEL_SAMPLES = 3;
-
-    for (int i = 0; i < NUM_LEVEL_SAMPLES; i++) {
-        float d = readUltrasonicCm(trigPin, echoPin);
-        if (d > 0) {
-            totalDist += d;
-            validReadings++;
-        }
-        delay(30); // HC-SR04 needs ~30ms between readings
-    }
-
-    if (validReadings == 0) {
-        reading.distanceCm = -1.0f;
-        reading.fillPercentage = -1.0f;
-        reading.fillStatus = BIN_LEVEL_UNKNOWN;
-        reading.status = SENSOR_DISCONNECTED;
+        reading.weightGrams = 0.0f; // Explicitly uncalibrated
         return reading;
     }
 
-    reading.distanceCm = totalDist / validReadings;
-    reading.fillPercentage = distanceToFillPercent(reading.distanceCm);
-    reading.status = SENSOR_OK;
+    float weight = hx711.get_units(HX711_AVG_SAMPLES);
 
-    // Determine fill status
-    if (reading.fillPercentage >= BIN_LEVEL_FULL_PCT) {
-        reading.fillStatus = BIN_FULL;
-    } else if (reading.fillPercentage >= BIN_LEVEL_NEAR_FULL_PCT) {
-        reading.fillStatus = BIN_NEAR_CAPACITY;
-    } else if (reading.fillPercentage > 5.0f) {
-        reading.fillStatus = BIN_NORMAL;
+    if (weight < -WEIGHT_MIN_VALID_GRAMS) {
+        // Negative drift exceeding tolerance -> needs tare
+        reading.status = SENSOR_NOT_CALIBRATED;
+        reading.weightGrams = weight;
+    } else if (weight > WEIGHT_MAX_CAPACITY_GRAMS) {
+        reading.status = SENSOR_OUT_OF_RANGE;
+        reading.weightGrams = weight;
     } else {
-        reading.fillStatus = BIN_EMPTY;
+        // Valid calibrated weight
+        if (weight < 0.0f) weight = 0.0f; // Clamp subtle tare noise
+        reading.weightGrams = weight;
+        reading.status = SENSOR_OK;
     }
 
     return reading;
 }
 
 // ============================================================================
-// AGGREGATED READ
+// ULTRASONIC PROXIMITY DETECTION
 // ============================================================================
+ProximityReading sensors_readProximity() {
+    ProximityReading reading;
 
-SystemData sensors_readAll() {
-    SystemData data;
-    data.timestampMs = millis();
+    // Send 10µs trigger pulse
+    digitalWrite(PIN_ULTRASONIC_TRIG, LOW);
+    delayMicroseconds(2);
+    digitalWrite(PIN_ULTRASONIC_TRIG, HIGH);
+    delayMicroseconds(10);
+    digitalWrite(PIN_ULTRASONIC_TRIG, LOW);
 
-    // Shared gas sensor
-    data.gas = sensors_readGas();
+    // Bounded measurement to avoid blocking Uno loop
+    unsigned long duration = pulseIn(PIN_ULTRASONIC_ECHO, HIGH, ULTRASONIC_TIMEOUT_US);
 
-    // Per-bin sensors
-    for (int b = 0; b < BIN_COUNT; b++) {
-        BinType bin = (BinType)b;
-        data.bins[b].binType = bin;
-        data.bins[b].moisture = sensors_readMoisture(bin);
-        data.bins[b].metal = sensors_readMetal(bin);
-        data.bins[b].weight = sensors_readWeight(bin);
-        data.bins[b].level = sensors_readLevel(bin);
+    if (duration == 0) {
+        reading.distanceCm = -1.0f;
+        reading.objectDetected = false;
+        reading.status = SENSOR_TIMEOUT;
+        return reading;
     }
 
-    return data;
+    float distance = (duration * 0.0343f) / 2.0f;
+
+    if (distance < ULTRASONIC_MIN_VALID_CM || distance > ULTRASONIC_MAX_VALID_CM) {
+        reading.distanceCm = distance;
+        reading.objectDetected = false;
+        reading.status = SENSOR_OUT_OF_RANGE;
+        return reading;
+    }
+
+    reading.distanceCm = distance;
+    reading.objectDetected = (distance <= PROXIMITY_THRESHOLD_CM);
+    reading.status = SENSOR_OK;
+    return reading;
 }
 
 // ============================================================================
-// CALIBRATION
+// AUTOMATIC LID ACTUATION & STATE MACHINE
 // ============================================================================
+void sensors_controlLid(LidCommandState cmd) {
+    lidState.commandState = cmd;
+    lidState.stateChangeTimestampMs = millis();
 
-void sensors_tareWeight(BinType bin) {
-    HX711& hx = (bin == BIN_BIODEGRADABLE) ? hx711Bio : hx711NonBio;
-    if (hx.wait_ready_timeout(HX711_TIMEOUT_MS)) {
-        hx.tare(HX711_AVG_READINGS);
-        Serial.print(F("[SENSORS] Tared load cell: "));
-        Serial.println(bin == BIN_BIODEGRADABLE ? "Bio" : "NonBio");
+    if (cmd == LID_OPEN) {
+        lidServo.write(LID_SERVO_OPEN_ANGLE);
+        digitalWrite(PIN_LED_PROXIMITY, HIGH);
     } else {
-        Serial.print(F("[SENSORS] Tare FAILED (timeout): "));
-        Serial.println(bin == BIN_BIODEGRADABLE ? "Bio" : "NonBio");
+        lidServo.write(LID_SERVO_CLOSED_ANGLE);
+        digitalWrite(PIN_LED_PROXIMITY, LOW);
+        lidClosedTimestampMs = millis();
     }
 }
 
-void sensors_setCalibrationFactor(BinType bin, float factor) {
-    if (bin == BIN_BIODEGRADABLE) {
-        calibFactorBio = factor;
-        hx711Bio.set_scale(factor);
-        isCalibratedBio = true;
-        Serial.print(F("[SENSORS] Bio calibration factor set: "));
+LidState sensors_getLidState() {
+    return lidState;
+}
+
+bool sensors_updateLidStateMachine() {
+    unsigned long now = millis();
+    LidCommandState previousState = lidState.commandState;
+
+    ProximityReading prox = sensors_readProximity();
+
+    // Check cooldown period
+    bool inCooldown = (now - lidClosedTimestampMs < LID_COOLDOWN_MS);
+
+    if (lidState.commandState == LID_CLOSED) {
+        if (!inCooldown && prox.status == SENSOR_OK && prox.objectDetected) {
+            proximityDebounceCounter++;
+            if (proximityDebounceCounter >= PROXIMITY_DEBOUNCE_COUNT) {
+                // Object approach confirmed -> open lid
+                sensors_controlLid(LID_OPEN);
+                lidHoldTimerStartMs = now;
+                proximityDebounceCounter = 0;
+            }
+        } else {
+            proximityDebounceCounter = 0;
+        }
+    } else if (lidState.commandState == LID_OPEN) {
+        if (prox.status == SENSOR_OK && prox.objectDetected) {
+            // Object remains in proximity -> keep open, reset hold timer
+            lidHoldTimerStartMs = now;
+        } else {
+            // Object absent -> check if hold duration elapsed
+            if (now - lidHoldTimerStartMs >= LID_HOLD_OPEN_MS) {
+                sensors_controlLid(LID_CLOSED);
+            }
+        }
+    }
+
+    return (previousState != lidState.commandState);
+}
+
+// ============================================================================
+// CALIBRATION FUNCTIONS
+// ============================================================================
+void sensors_tareWeight() {
+    if (hx711.wait_ready_timeout(HX711_TIMEOUT_MS)) {
+        hx711.tare(HX711_AVG_SAMPLES);
+    }
+}
+
+void sensors_setWeightCalibration(float factor) {
+    if (factor > 0.0f) {
+        weightCalibrationFactor = factor;
+        hx711.set_scale(factor);
+        isWeightCalibratedState = true;
+    }
+}
+
+float sensors_getWeightCalibration() {
+    return weightCalibrationFactor;
+}
+
+bool sensors_isWeightCalibrated() {
+    return isWeightCalibratedState;
+}
+
+void sensors_setMoistureCalibration(int airRaw, int waterRaw) {
+    if (airRaw > waterRaw && waterRaw > 0) {
+        moistureAirRawDefault = airRaw;
+        moistureWaterRawDefault = waterRaw;
+        isMoistureCalibratedState = true;
+    }
+}
+
+bool sensors_isMoistureCalibrated() {
+    return isMoistureCalibratedState;
+}
+
+int sensors_getMoistureAirRaw() {
+    return moistureAirRawDefault;
+}
+
+int sensors_getMoistureWaterRaw() {
+    return moistureWaterRawDefault;
+}
+
+// ============================================================================
+// SYSTEM TELEMETRY CAPTURE
+// ============================================================================
+SystemTelemetry sensors_captureTelemetry() {
+    SystemTelemetry telem;
+    telemetrySequenceCounter++;
+
+    telem.sequenceNumber = telemetrySequenceCounter;
+    telem.uptimeSeconds  = millis() / 1000;
+    telem.moisture       = sensors_readMoisture();
+    telem.weight         = sensors_readWeight();
+    telem.proximity      = sensors_readProximity();
+    telem.lid            = sensors_getLidState();
+    telem.lastRecordedCategory = CATEGORY_UNCLASSIFIED;
+
+    // Calculate fault bitmask
+    telem.faultBitmask = FAULT_NONE;
+    if (telem.moisture.status == SENSOR_DISCONNECTED) {
+        telem.faultBitmask |= FAULT_MOISTURE_OFFLINE;
+    }
+    if (telem.weight.status == SENSOR_TIMEOUT) {
+        telem.faultBitmask |= FAULT_HX711_TIMEOUT;
+    }
+    if (telem.proximity.status == SENSOR_TIMEOUT) {
+        telem.faultBitmask |= FAULT_ULTRASONIC_TIMEOUT;
+    }
+    if (!telem.moisture.isCalibrated || !telem.weight.isCalibrated) {
+        telem.faultBitmask |= FAULT_CALIBRATION_REQUIRED;
+    }
+
+    // Drive fault LED
+    if (telem.faultBitmask & (FAULT_MOISTURE_OFFLINE | FAULT_HX711_TIMEOUT)) {
+        digitalWrite(PIN_LED_FAULT, HIGH);
     } else {
-        calibFactorNonBio = factor;
-        hx711NonBio.set_scale(factor);
-        isCalibratedNonBio = true;
-        Serial.print(F("[SENSORS] NonBio calibration factor set: "));
+        digitalWrite(PIN_LED_FAULT, LOW);
     }
-    Serial.println(factor);
-}
 
-float sensors_getCalibrationFactor(BinType bin) {
-    return (bin == BIN_BIODEGRADABLE) ? calibFactorBio : calibFactorNonBio;
+    return telem;
 }

@@ -1,92 +1,42 @@
-# Pin Mapping — Intelligent Solid Waste Segregation System
+# Pin Mapping — Intelligent Waste Segregation Analytics (Arduino Uno)
 
-> **Board:** ESP32 DevKit V1 (30-pin or 38-pin)  
-> **Logic Level:** 3.3V — Do NOT connect 5V signals directly to ESP32 GPIO
+> **Microcontroller:** Arduino Uno R3 (Microchip ATmega328P)  
+> **Logic Level:** 5.0V TTL  
+> **Analog Resolution:** 10-bit (0–1023 counts, 4.88mV per LSB at 5.0V VREF)  
+> **Clock Speed:** 16 MHz  
+> **Flash / SRAM:** 32 KB Flash / 2 KB SRAM  
 
-## GPIO Assignment Table
+---
 
-| Component | Signal | ESP32 GPIO | Direction | Signal Type | Supply (VCC) | Notes |
-|---|---|---|---|---|---|---|
-| **Gas Sensor** (MQ-series) | Analog Out | **GPIO 36 (VP)** | Input | Analog 0–3.3V | 5V | Use voltage divider if output > 3.3V |
-| Gas Sensor | Digital Out | **GPIO 23** | Input | Digital | 5V | Optional threshold output |
-| **Moisture Sensor 1** (Bio) | Analog Out | **GPIO 39 (VN)** | Input | Analog 0–3.3V | 3.3V / 5V | Verify output range for your module |
-| **Moisture Sensor 2** (NonBio) | Analog Out | **GPIO 34** | Input | Analog 0–3.3V | 3.3V / 5V | Verify output range for your module |
-| **Metal Sensor 1** (Bio) | Digital Out | **GPIO 18** | Input | Digital | 5V | NPN: active LOW; use pull-up |
-| **Metal Sensor 2** (NonBio) | Digital Out | **GPIO 19** | Input | Digital | 5V | NPN: active LOW; use pull-up |
-| **HX711 #1** (Bio) | DOUT | **GPIO 16** | Input | Digital | 5V | HX711 module, NOT direct load cell |
-| HX711 #1 (Bio) | SCK | **GPIO 4** | Output | Digital | 5V | Clock signal |
-| **HX711 #2** (NonBio) | DOUT | **GPIO 17** | Input | Digital | 5V | HX711 module |
-| HX711 #2 (NonBio) | SCK | **GPIO 5** | Output | Digital | 5V | Weak pull-up at boot — OK for HX711 |
-| **Ultrasonic 1** (Bio) | TRIG | **GPIO 26** | Output | Digital | 5V | 10µs pulse trigger |
-| Ultrasonic 1 (Bio) | ECHO | **GPIO 25** | Input | Digital | 5V⚡ | **USE VOLTAGE DIVIDER** (5V → 3.3V) |
-| **Ultrasonic 2** (NonBio) | TRIG | **GPIO 27** | Output | Digital | 5V | 10µs pulse trigger |
-| Ultrasonic 2 (NonBio) | ECHO | **GPIO 14** | Input | Digital | 5V⚡ | **USE VOLTAGE DIVIDER** (5V → 3.3V) |
-| **LED** System OK | Anode | **GPIO 2** | Output | Digital | 3.3V | On-board LED (most boards), 220Ω resistor |
-| **LED** Bio Mismatch | Anode | **GPIO 13** | Output | Digital | 3.3V | Red LED, 220Ω resistor |
-| **LED** NonBio Mismatch | Anode | **GPIO 15** | Output | Digital | 3.3V | Red LED, 220Ω resistor |
-| **LED** Bin Full | Anode | **GPIO 33** | Output | Digital | 3.3V | Yellow/Amber LED, 220Ω resistor |
-| **LED** Sensor Fault | Anode | **GPIO 32** | Output | Digital | 3.3V | Red LED (blinks), 220Ω resistor |
+## 1. Pin Assignment Table
 
-## ESP32 GPIO Safety Notes
+| Peripheral | Signal | Arduino Uno Pin | Pin Type | Signal Voltage | Supply Pin | Notes |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Moisture Sensor** | Analog Out (AOUT) | **A0** | Analog Input | 0–5.0V | 5V / GND | Capacitive soil moisture sensor |
+| **HX711 Amplifier** | Data Out (DOUT) | **D2** | Digital Input | 5.0V TTL | 5V / GND | Load cell serial data line |
+| **HX711 Amplifier** | Serial Clock (SCK) | **D3** | Digital Output | 5.0V TTL | 5V / GND | Load cell clock synchronization |
+| **HC-SR04 Ultrasonic** | Trigger (TRIG) | **D4** | Digital Output | 5.0V TTL | 5V / GND | 10µs pulse initiates sonic burst |
+| **HC-SR04 Ultrasonic** | Echo (ECHO) | **D5** | Digital Input | 5.0V TTL | 5V / GND | Direct connection (5V native) |
+| **Lid Actuator** | PWM Signal | **D6** | Digital PWM | 5.0V TTL | 5V / GND | 50Hz PWM to servo (0° closed, 90° open) |
+| **Proximity LED** | Anode (+) | **D7** | Digital Output | 5.0V (current limited)| GND | Yellow/Amber LED (active during proximity) |
+| **Fault LED** | Anode (+) | **D8** | Digital Output | 5.0V (current limited)| GND | Red LED (illuminates on sensor timeout) |
+| **Heartbeat LED** | Onboard LED | **D13** | Digital Output | 5.0V (onboard) | — | Periodic 500ms heartbeat blink |
+| **UART Serial TX** | Data Transmit | **D1 (TX)** | Serial TX | 5.0V TTL | — | USB serial to gateway (115200 baud) |
+| **UART Serial RX** | Data Receive | **D0 (RX)** | Serial RX | 5.0V TTL | — | USB serial from gateway (115200 baud) |
 
-### Pins Used — Verified Safe
-| GPIO | Function | Boot Concern |
-|------|----------|-------------|
-| 2 | LED | Boot-strap (must be LOW for flash) — OK as LED output |
-| 4 | HX711 SCK | Safe |
-| 5 | HX711 SCK | Weak pull-up at boot — OK |
-| 13 | LED | Safe |
-| 14 | Echo input | Outputs PWM at boot — OK for input use |
-| 15 | LED | Must be HIGH at boot for serial output — LED OK |
-| 16 | HX711 DOUT | Safe |
-| 17 | HX711 DOUT | Safe |
-| 18 | Metal input | Safe |
-| 19 | Metal input | Safe |
-| 23 | Gas digital | Safe |
-| 25 | Echo input | Safe |
-| 26 | Trig output | Safe |
-| 27 | Trig output | Safe |
-| 32 | LED | ADC1_CH4 — safe for digital output |
-| 33 | LED | ADC1_CH5 — safe for digital output |
-| 34 | Moisture ADC | Input-only — OK for analog read |
-| 36 | Gas ADC | Input-only (VP) — OK for analog read |
-| 39 | Moisture ADC | Input-only (VN) — OK for analog read |
+---
 
-### Pins NOT Used (Reserved)
-| GPIO | Reason |
-|------|--------|
-| 0 | Boot button — avoid |
-| 1 | TX0 (serial output) — reserved |
-| 3 | RX0 (serial input) — reserved |
-| 6–11 | Connected to SPI flash — **DO NOT USE** |
-| 12 | Boot-strap (MTDI) — affects flash voltage |
+## 2. Voltage Safety & Hardware Interfacing
 
-## Voltage Divider for HC-SR04 Echo Pins
+1. **5.0V Native Compatibility:** Unlike the 3.3V ESP32, the Arduino Uno operates at 5.0V. The HC-SR04 ultrasonic echo pin outputs a 5.0V pulse which connects **directly** to Pin D5 without requiring a resistive voltage divider.
+2. **Capacitive Moisture Sensor Interfacing:** Connect sensor VCC to the Uno 5V pin and GND to Uno GND. The analog voltage output feeds directly into Pin A0.
+3. **Servo Power Isolation:** Standard micro servos (SG90) can be powered from the Uno 5V rail for testing. However, for continuous operation or larger servos (MG90S, MG996R), provide an **independent 5V 1A DC power supply** for the servo power pins to prevent brownout resets on the ATmega328P. **Always tie servo power ground to Arduino ground (common GND).**
+4. **Current Limiting:** Use 220Ω series resistors on Pins D7 and D8 to keep LED current under 15mA per pin (well below the ATmega328P 40mA absolute maximum).
 
-The HC-SR04 ECHO pin outputs 5V logic. The ESP32 tolerates only 3.3V.
+---
 
-```
-HC-SR04 ECHO ──── R1 (1kΩ) ──┬── ESP32 GPIO (25 or 14)
-                               │
-                          R2 (2kΩ)
-                               │
-                              GND
-```
+## 3. Reserved & Free Pins
 
-Output voltage: 5V × 2kΩ / (1kΩ + 2kΩ) = 3.33V ✓
-
-## Power Requirements
-
-| Component | Voltage | Typical Current |
-|-----------|---------|-----------------|
-| ESP32 DevKit | 5V (USB) or 3.3V | 240mA active |
-| MQ-series gas sensor | 5V | 150–180mA (heater) |
-| Moisture sensor (×2) | 3.3V or 5V | 5–20mA each |
-| Metal sensor (×2) | 5V | 10–30mA each |
-| HX711 (×2) | 5V (or 3.3V) | 1.5mA each |
-| HC-SR04 (×2) | 5V | 15mA each |
-| LEDs (×5) | 3.3V (via GPIO) | 10mA each |
-
-**Total estimated:** ~500–600mA at 5V
-
-> **Recommendation:** Use a dedicated 5V/2A power supply. USB alone may not be sufficient for all sensors + ESP32. Share a common GND between all components and the ESP32.
+- **D9, D10, D11, D12:** Free digital pins available for future actuators or limit switches.
+- **A1, A2, A3, A4, A5:** Free analog/digital pins available for secondary sensors or I2C communication (A4=SDA, A5=SCL).
+- **D0 (RX) & D1 (TX):** Dedicated to USB serial telemetry communication at 115200 baud. Do not connect external hardware to D0/D1 while USB gateway is in use.

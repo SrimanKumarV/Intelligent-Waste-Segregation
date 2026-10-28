@@ -3,22 +3,17 @@
  * @brief Hardware pin mapping and system configuration
  *
  * INTELLIGENT SOLID WASTE SEGREGATION SYSTEM
+ * Physical Target: Arduino Uno (ATmega328P, 5V Logic, 10-bit ADC 0-1023)
  *
- * This file defines all GPIO assignments, sensor thresholds, timing
- * constants, and calibration defaults. All hardware-specific values
- * are centralised here for easy modification.
+ * Active Physical Hardware:
+ *   1. Capacitive Soil Moisture Sensor (Analog A0)
+ *   2. Load Cell + HX711 Amplifier (Digital D2 DOUT, D3 SCK)
+ *   3. Ultrasonic Sensor HC-SR04 for Proximity Lid Opening (Digital D4 TRIG, D5 ECHO)
+ *   4. Lid Actuator / Servo Motor (Digital D6 PWM)
+ *   5. Status & Diagnostic LEDs (D13 Heartbeat, D7 Proximity, D8 Fault)
  *
- * ESP32 DevKit V1 (30-pin) assumed. If using a 38-pin variant or
- * different board, review GPIO availability and reassign as needed.
- *
- * IMPORTANT GPIO NOTES:
- * - GPIO 0, 2, 5, 12, 15: Have boot-strapping functions. Avoid for
- *   critical inputs that might interfere with boot.
- * - GPIO 6–11: Connected to on-board SPI flash. DO NOT USE.
- * - GPIO 34, 35, 36 (VP), 39 (VN): Input-only, no internal pull-up.
- * - ADC2 pins (GPIO 0,2,4,12-15,25-27) cannot be used with WiFi active.
- * - ADC1 pins (GPIO 32-39) are safe for analog reads even with WiFi.
- * - ESP32 GPIOs are 3.3V logic. Use level shifters for 5V sensors.
+ * Note: Arduino Uno provides native 5V I/O logic. Direct connection of
+ * 5V HC-SR04 echo and HX711 is supported without voltage dividers.
  */
 
 #ifndef CONFIG_H
@@ -27,176 +22,86 @@
 #include <Arduino.h>
 
 // ============================================================================
-// SYSTEM IDENTIFICATION
+// SYSTEM IDENTIFICATION & TELEMETRY PROTOCOL
 // ============================================================================
-#define SYSTEM_NAME       "Intelligent Waste Segregation"
-#define FIRMWARE_VERSION  "1.0.0"
-#define SERIAL_BAUD_RATE  115200
-
-// ============================================================================
-// GPIO PIN ASSIGNMENTS
-// ============================================================================
-// Each assignment documents: Component | Signal type | ESP32 GPIO | Notes
-//
-// ADC1 channel pins used for analog sensors (safe with WiFi):
-//   GPIO 32, 33, 34, 35, 36, 39
-
-// --- Gas Sensor (e.g., MQ-2 / MQ-4 / MQ-135) ---
-// Analog output connected to ADC1. Digital output optionally available.
-// CAUTION: MQ-series modules often output 0–5V analog. The ESP32 ADC
-// tolerates only 0–3.3V. If your module's output exceeds 3.3V, use a
-// voltage divider (e.g., 2kΩ + 1kΩ) to scale it down.
-#define GAS_SENSOR_ANALOG_PIN     36  // ADC1_CH0 (VP), input-only
-#define GAS_SENSOR_DIGITAL_PIN    23  // Optional digital threshold output
-
-// --- Moisture Sensor 1: Biodegradable Bin ---
-// Capacitive or resistive soil moisture sensor. Analog output.
-// Typical output: 0 (wet) to 4095 (dry) for capacitive; reversed for resistive.
-// Verify polarity with your specific module.
-#define MOISTURE_BIO_PIN          39  // ADC1_CH3 (VN), input-only
-
-// --- Moisture Sensor 2: Non-Biodegradable Bin ---
-#define MOISTURE_NONBIO_PIN       34  // ADC1_CH6, input-only
-
-// --- Metal Sensor 1: Biodegradable Bin ---
-// Inductive proximity sensor or metal detector module.
-// Typical output: Digital LOW when metal detected, HIGH when no metal.
-// Verify output polarity with your specific module.
-#define METAL_BIO_PIN             18  // Digital input
-
-// --- Metal Sensor 2: Non-Biodegradable Bin ---
-#define METAL_NONBIO_PIN          19  // Digital input
-
-// --- Load Cell 1 + HX711: Biodegradable Bin ---
-// HX711 requires two digital pins: DOUT (data) and SCK (clock).
-// Do NOT connect load cells directly to ESP32 analog pins.
-#define HX711_BIO_DOUT_PIN        16  // HX711 data out
-#define HX711_BIO_SCK_PIN        4   // HX711 clock
-
-// --- Load Cell 2 + HX711: Non-Biodegradable Bin ---
-#define HX711_NONBIO_DOUT_PIN     17  // HX711 data out
-#define HX711_NONBIO_SCK_PIN      5   // HX711 clock (GPIO5 has weak pull-up at boot)
-
-// --- Bin Level Sensor 1: Biodegradable Bin ---
-// Ultrasonic (HC-SR04) requires TRIG (output) and ECHO (input).
-// HC-SR04 operates at 5V but ECHO output is 5V — use a voltage divider
-// (e.g., 1kΩ + 2kΩ) to bring ECHO signal to ~3.3V for ESP32.
-// Alternative: IR proximity sensor with digital output.
-#define LEVEL_BIO_TRIG_PIN        26  // Ultrasonic trigger (output)
-#define LEVEL_BIO_ECHO_PIN        25  // Ultrasonic echo (input) — USE VOLTAGE DIVIDER
-
-// --- Bin Level Sensor 2: Non-Biodegradable Bin ---
-#define LEVEL_NONBIO_TRIG_PIN     27  // Ultrasonic trigger (output)
-#define LEVEL_NONBIO_ECHO_PIN     14  // Ultrasonic echo (input) — USE VOLTAGE DIVIDER
-
-// --- LED Indicators ---
-// Use current-limiting resistors (220Ω–330Ω) in series with each LED.
-// ESP32 GPIO can source ~12mA safely; standard LEDs draw 10–20mA.
-#define LED_SYSTEM_OK_PIN         2   // On-board LED (most ESP32 boards) — Green
-#define LED_BIO_MISMATCH_PIN      13  // Biodegradable bin mismatch warning — Red
-#define LED_NONBIO_MISMATCH_PIN   15  // Non-biodegradable bin mismatch warning — Red
-#define LED_BIN_FULL_PIN          33  // Bin full / near capacity — Yellow/Amber
-#define LED_SENSOR_FAULT_PIN      32  // Sensor fault indicator — Red (blinking)
+#define SYSTEM_NAME             "Intelligent Waste Segregation"
+#define FIRMWARE_VERSION        "2.0.0-UNO"
+#define DEVICE_ID               "UNO-WS01"
+#define TELEMETRY_PROTOCOL_VER  1
+#define SERIAL_BAUD_RATE        115200
 
 // ============================================================================
-// SENSOR CONFIGURATION
+// ARDUINO UNO PIN ASSIGNMENTS
 // ============================================================================
 
-// --- Gas Sensor ---
-// Warm-up time for MQ-series sensors (typically 20–60 seconds for stable readings)
-#define GAS_WARMUP_TIME_MS        30000   // 30 seconds
-// Threshold above which gas is considered significantly detected
-// This is a RAW ADC value (0–4095, 12-bit). Calibrate with actual sensor.
-#define GAS_THRESHOLD_HIGH        1500    // UNCALIBRATED DEFAULT — adjust after testing
-#define GAS_THRESHOLD_LOW         800     // Below this: minimal gas detected
+// --- Capacitive Soil Moisture Sensor ---
+// Connect to 5V (or 3.3V) and GND. Analog Out connects to A0.
+// On ATmega328P, 10-bit ADC returns 0 to 1023.
+#define PIN_MOISTURE_ANALOG         A0
 
-// --- Moisture Sensors ---
-// ADC raw value thresholds. ESP32 12-bit ADC: 0–4095.
-// For CAPACITIVE sensors: lower value = wetter (verify with your module).
-// For RESISTIVE sensors: lower value = drier (verify with your module).
-//
-// Set MOISTURE_POLARITY_INVERTED to true if lower raw values mean MORE moisture.
-#define MOISTURE_POLARITY_INVERTED  true  // true for typical capacitive sensors
-#define MOISTURE_THRESHOLD_WET      1500  // Below this (if inverted): considered wet
-#define MOISTURE_THRESHOLD_DRY      3000  // Above this (if inverted): considered dry
-// Between WET and DRY thresholds: intermediate moisture
+// --- Load Cell + HX711 Amplifier ---
+// Connect HX711 VCC to 5V, GND to GND.
+// DOUT and SCK are standard 5V digital I/O lines.
+#define PIN_HX711_DOUT              2
+#define PIN_HX711_SCK               3
 
-// --- Metal Sensors ---
-// Output polarity when metal is detected. Set to match your sensor module.
-// true  = sensor outputs LOW when metal detected (common for NPN proximity)
-// false = sensor outputs HIGH when metal detected
-#define METAL_ACTIVE_LOW           true
+// --- HC-SR04 Ultrasonic Sensor (Lid Proximity Detection) ---
+// Connect VCC to 5V, GND to GND.
+// On Arduino Uno, ECHO signal is 5V compatible.
+#define PIN_ULTRASONIC_TRIG         4
+#define PIN_ULTRASONIC_ECHO         5
 
-// --- Load Cell / HX711 ---
-// Calibration factor converts raw HX711 counts to grams.
-// Determine this by calibrating with a known reference weight.
-// calibration_factor = raw_reading_with_weight / known_weight_grams
-// These are PLACEHOLDER defaults. You MUST calibrate with your actual load cells.
-#define HX711_BIO_CALIBRATION_FACTOR      420.0f   // UNCALIBRATED — placeholder
-#define HX711_NONBIO_CALIBRATION_FACTOR   420.0f   // UNCALIBRATED — placeholder
-// Maximum weight capacity (grams) — for sanity checking
-#define WEIGHT_MAX_CAPACITY_GRAMS         10000.0f  // 10 kg
-// Minimum valid weight (below this, treat as empty or tare drift)
-#define WEIGHT_MIN_VALID_GRAMS            5.0f
-// HX711 read timeout (milliseconds)
-#define HX711_TIMEOUT_MS                  1000
-// Number of readings to average for stable weight
-#define HX711_AVG_READINGS                5
+// --- Lid Actuator (Servo Motor / Mechanism) ---
+// Standard 5V servo PWM control signal on D6.
+#define PIN_LID_SERVO               6
 
-// --- Bin Level Sensors (Ultrasonic HC-SR04) ---
-// Distance from sensor to bottom of empty bin (cm)
-#define BIN_DEPTH_CM                      40.0f
-// Thresholds as percentage of bin capacity (0% = empty, 100% = full)
-#define BIN_LEVEL_NEAR_FULL_PCT           75.0f   // ≥75% = nearing capacity
-#define BIN_LEVEL_FULL_PCT                90.0f   // ≥90% = full
-// Maximum valid distance reading (cm) — beyond this, sensor error
-#define ULTRASONIC_MAX_DISTANCE_CM        60.0f
-// Minimum valid distance reading (cm) — below this, likely obstruction
-#define ULTRASONIC_MIN_DISTANCE_CM        2.0f
-// Ultrasonic timeout (microseconds) for pulseIn
-#define ULTRASONIC_TIMEOUT_US             30000
+// --- Diagnostic & Status LEDs ---
+#define PIN_LED_HEARTBEAT           13  // On-board LED: periodic heartbeat blink
+#define PIN_LED_PROXIMITY           7   // Yellow/Amber LED: proximity active / lid open
+#define PIN_LED_FAULT               8   // Red LED: sensor timeout / communication fault
 
 // ============================================================================
-// DECISION LOGIC CONFIGURATION
+// SENSOR CALIBRATION & THRESHOLDS
 // ============================================================================
 
-// Number of consecutive readings required before triggering a mismatch alert
-// This reduces false positives from momentary sensor noise
-#define MISMATCH_PERSISTENCE_COUNT        3
+// --- Capacitive Moisture Sensor ---
+// Capacitive sensors output lower voltage when wet.
+// Dual-point calibration is required for accurate percentage.
+// Default values are UNCALIBRATED placeholders.
+#define MOISTURE_RAW_AIR_DEFAULT    620   // Measured raw ADC in dry air (0% moisture)
+#define MOISTURE_RAW_WATER_DEFAULT  290   // Measured raw ADC submerged in water (100% moisture)
+#define MOISTURE_ADC_MIN_VALID      50    // ADC below this indicates short to GND
+#define MOISTURE_ADC_MAX_VALID      980   // ADC above this indicates open circuit / disconnected
 
-// Confidence/evidence scoring weights (heuristic, not statistically validated)
-// These weights sum the evidence from different sensors to form a score.
-// A higher total score indicates stronger evidence of a mismatch.
-#define EVIDENCE_WEIGHT_METAL             40   // Metal in bio bin is strong evidence
-#define EVIDENCE_WEIGHT_MOISTURE          20   // Moisture contribution
-#define EVIDENCE_WEIGHT_GAS               15   // Gas contribution
-// Threshold score above which a POSSIBLE_MISMATCH is flagged
-#define MISMATCH_SCORE_THRESHOLD          30
+// --- Load Cell + HX711 ---
+// Calibration factor converts raw counts to grams:
+//   weight_grams = (raw_counts - offset) / calibration_factor
+// Must be calibrated with a known reference mass.
+#define HX711_CALIBRATION_FACTOR_DEFAULT  420.0f  // UNCALIBRATED placeholder
+#define HX711_TIMEOUT_MS                  500     // Non-blocking timeout
+#define HX711_AVG_SAMPLES                 3       // Samples per reading for Uno stability
+#define WEIGHT_MAX_CAPACITY_GRAMS         10000.0f// 10 kg maximum sanity limit
+#define WEIGHT_MIN_VALID_GRAMS            2.0f    // Ignore tare jitter below 2g
+
+// --- Ultrasonic Proximity Sensor for Lid Opening ---
+// Detection distance threshold: Object within this distance triggers opening.
+#define PROXIMITY_THRESHOLD_CM      20.0f   // Distance in cm to trigger lid opening
+#define PROXIMITY_DEBOUNCE_COUNT    2       // Consecutive cycles required to trigger
+#define ULTRASONIC_TIMEOUT_US       15000   // 15ms (~2.5m range) to avoid blocking Uno loop
+#define ULTRASONIC_MIN_VALID_CM     2.0f    // Below 2cm is sensor blind spot
+#define ULTRASONIC_MAX_VALID_CM     200.0f  // Max plausible distance for proximity detection
+
+// --- Lid Actuation Parameters ---
+#define LID_SERVO_CLOSED_ANGLE      0       // Degrees for closed lid
+#define LID_SERVO_OPEN_ANGLE        90      // Degrees for fully open lid
+#define LID_HOLD_OPEN_MS            4000    // Stay open for 4 seconds after object leaves
+#define LID_COOLDOWN_MS             1500    // Delay after closing before re-triggering
 
 // ============================================================================
-// TIMING AND FILTERING
+// SYSTEM TIMING
 // ============================================================================
-
-// Main loop cycle interval (milliseconds)
-#define MONITORING_INTERVAL_MS            2000  // 2 seconds between full readings
-
-// Analog reading averaging (number of samples per sensor read)
-#define ANALOG_AVG_SAMPLES                10
-
-// LED blink interval for fault indication (milliseconds)
-#define LED_BLINK_INTERVAL_MS             500
-
-// ============================================================================
-// SERIAL OUTPUT CONFIGURATION
-// ============================================================================
-
-// Enable CSV output mode (for data logging / analysis)
-#define CSV_OUTPUT_ENABLED                false
-
-// Separator for CSV output
-#define CSV_SEPARATOR                     ","
-
-// Print header row interval (every N cycles, reprint header for readability)
-#define SERIAL_HEADER_INTERVAL            20
+#define TELEMETRY_INTERVAL_MS       1000    // Telemetry publication rate (1Hz)
+#define PROXIMITY_CHECK_INTERVAL_MS 100     // Ultrasonic poll rate (10Hz)
+#define HEARTBEAT_BLINK_INTERVAL_MS 500     // LED toggle rate
 
 #endif // CONFIG_H

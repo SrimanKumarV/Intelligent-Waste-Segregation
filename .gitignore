@@ -26,3 +26,6 @@ desktop.ini
 # Logs & temp
 *.log
 scratch/
+
+# Runtime sensor data logs (persisted locally on host)
+data/*.jsonl
