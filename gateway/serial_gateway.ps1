@@ -40,9 +40,10 @@ function Start-SerialReaderThread ($portName, $deviceType, $endpointUrl, $peerPo
         param($pName, $dType, $url, $baud, $syncFile)
 
         [System.Reflection.Assembly]::LoadWithPartialName("System.IO.Ports") | Out-Null
-        $sp = $null
         try {
-            $sp = New-Object System.IO.Ports.SerialPort $pName, $baud, [System.IO.Ports.Parity]::None, 8, [System.IO.Ports.StopBits]::One
+            $sp = New-Object System.IO.Ports.SerialPort $pName, $baud, "None", 8, "One"
+            $sp.DtrEnable = $true
+            $sp.RtsEnable = $true
             $sp.ReadTimeout = 2000
             $sp.WriteTimeout = 2000
             $sp.Open()
