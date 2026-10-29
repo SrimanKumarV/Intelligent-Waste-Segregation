@@ -263,12 +263,12 @@ function Start-SerialReaderThread ($portName, $deviceType, $endpointUrl, $baud, 
                 } catch [System.TimeoutException] {
                     # Normal read timeout; keep loop alive
                 } catch {
-                    Write-Host "[$dType READ ERROR] $_" -ForegroundColor Red
+                    Write-Host "[$dType READ ERROR] $($_.Exception.Message)" -ForegroundColor Red
                     Start-Sleep -Milliseconds 500
                 }
             }
         } catch {
-            Write-Host "[$dType ERROR] Failed to connect on $pName: $_" -ForegroundColor Red
+            Write-Host "[$dType ERROR] Failed to connect on ${pName}: $($_.Exception.Message)" -ForegroundColor Red
         } finally {
             if ($sp -and $sp.IsOpen) { $sp.Close() }
         }

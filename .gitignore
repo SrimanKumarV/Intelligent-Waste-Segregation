@@ -29,6 +29,7 @@ scratch/
 
 # Runtime sensor data logs (persisted locally on host)
 data/*.jsonl
+data/gateway_sync.json
 
 # Python cache & artifacts
 __pycache__/
