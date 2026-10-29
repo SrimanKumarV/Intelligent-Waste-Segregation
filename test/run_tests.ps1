@@ -51,7 +51,7 @@ try {
 }
 
 # 3. Check Dashboard Files Integrity
-Write-Host "`n[3/3] Checking Dashboard Asset Integrity..." -ForegroundColor Yellow
+Write-Host "`n[3/5] Checking Dashboard Asset Integrity..." -ForegroundColor Yellow
 $dashFiles = @("index.html", "styles.css", "app.js")
 foreach ($f in $dashFiles) {
     $p = Join-Path "$PSScriptRoot\..\simulation\dashboard" $f
@@ -62,6 +62,29 @@ foreach ($f in $dashFiles) {
         Write-Host "  FAIL: Missing $f" -ForegroundColor Red
         $allPassed = $false
     }
+}
+
+# 4. Live Hardware & Simulation Integration Test
+Write-Host "`n[4/5] Running Live Hardware & Simulation Mode Integration Tests..." -ForegroundColor Yellow
+$simTestScript = Join-Path $PSScriptRoot "test_simulation_mode.ps1"
+if (Test-Path $simTestScript) {
+    & powershell -ExecutionPolicy Bypass -File $simTestScript
+    if ($LASTEXITCODE -ne 0) { $allPassed = $false }
+}
+
+# 5. Sensor-Based Machine Learning Automated Test Suite (pytest)
+Write-Host "`n[5/5] Running Sensor Machine Learning & Synthetic Physics Suite (pytest)..." -ForegroundColor Yellow
+$pythonCmd = Get-Command python -ErrorAction SilentlyContinue
+if ($pythonCmd) {
+    & python -m pytest "$PSScriptRoot\test_ml.py" -q
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "  PASS: Sensor ML and synthetic physics automated tests passed" -ForegroundColor Green
+    } else {
+        Write-Host "  FAIL: ML test suite reported failures" -ForegroundColor Red
+        $allPassed = $false
+    }
+} else {
+    Write-Host "  SKIPPED: Python not found in PATH" -ForegroundColor DarkGray
 }
 
 Write-Host "`n==========================================================" -ForegroundColor Cyan

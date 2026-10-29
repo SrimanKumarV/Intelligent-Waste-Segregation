@@ -29,3 +29,10 @@ scratch/
 
 # Runtime sensor data logs (persisted locally on host)
 data/*.jsonl
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+

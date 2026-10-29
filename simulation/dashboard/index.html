@@ -18,6 +18,24 @@
         </div>
       </div>
       <div class="header-status-group">
+        <!-- Compact Monitoring Mode Toggle -->
+        <div class="mode-control-container" title="Toggle between Live Hardware (Arduino Uno) and Synthetic Simulation (Space/Enter)">
+          <span class="mode-control-label" id="mode-control-label">Monitoring Mode</span>
+          <div class="mode-toggle-pill" 
+               id="mode-toggle-switch" 
+               role="switch" 
+               aria-checked="false" 
+               aria-labelledby="mode-control-label"
+               tabindex="0">
+            <span class="mode-toggle-opt opt-live active" id="mode-opt-live">
+              <span class="mode-dot">●</span> LIVE HARDWARE
+            </span>
+            <span class="mode-toggle-opt opt-sim" id="mode-opt-sim">
+              <span class="mode-dot">●</span> SIMULATION
+            </span>
+          </div>
+        </div>
+
         <div id="conn-badge" class="badge-status connecting">
           <span class="status-indicator-dot"></span>
           <span id="conn-text">Awaiting Telemetry...</span>
@@ -30,6 +48,64 @@
         </button>
       </div>
     </header>
+
+    <!-- Persistent Monitoring Mode Status Banner -->
+    <div id="mode-banner" class="mode-banner live" role="status" aria-live="polite">
+      <div class="mode-banner-badge" id="mode-banner-badge">
+        <span class="mode-banner-indicator-dot">●</span>
+        <span id="mode-banner-title">LIVE HARDWARE MODE</span>
+      </div>
+      <div class="mode-banner-details" id="mode-banner-details">
+        <span id="mode-banner-desc">Receiving physical telemetry from Arduino Uno R3 via Serial Gateway or Web Serial.</span>
+        <span id="mode-banner-subdesc" class="mode-banner-subdesc">Hardware disconnected — connect the Arduino or switch to Simulation Mode.</span>
+      </div>
+      <div class="mode-banner-meta" id="mode-banner-meta">
+        <span class="meta-item-label">Data Provenance:</span>
+        <span class="meta-item-value" id="mode-banner-source">HARDWARE</span>
+      </div>
+    </div>
+
+    <!-- Simulation Controls Panel (Visible strictly when Simulation Mode is active) -->
+    <div id="simulation-controls" class="sim-controls-card" style="display: none;" role="region" aria-label="Simulation Controls">
+      <div class="sim-controls-header">
+        <span class="sim-controls-title">⚙ SYNTHETIC TELEMETRY GENERATOR CONTROLS</span>
+        <span class="sim-isolation-tag">PROVENANCE: SIMULATION • HARDWARE PROTECTED</span>
+      </div>
+      <div class="sim-controls-body">
+        <div class="sim-control-item">
+          <label for="sim-scenario-select">Simulation Scenario:</label>
+          <select id="sim-scenario-select" class="form-select sim-select">
+            <option value="SCENARIO_A">Scenario A: Normal Operation (Nominal Cycles, Proximity Events, Balanced Readings)</option>
+            <option value="SCENARIO_B">Scenario B: Bin Filling (Progressive Mass & Moisture Rise)</option>
+            <option value="SCENARIO_C">Scenario C: Hardware Unavailable / Offline Fault</option>
+          </select>
+        </div>
+
+        <div class="sim-control-item">
+          <label for="sim-speed-select">Update Interval:</label>
+          <select id="sim-speed-select" class="form-select sim-select">
+            <option value="1000">1.0s (Nominal)</option>
+            <option value="2000">2.0s (Relaxed)</option>
+            <option value="500">0.5s (Fast)</option>
+          </select>
+        </div>
+
+        <div class="sim-actions-group">
+          <button id="btn-sim-pause" class="btn-header sim-btn" type="button" title="Pause / resume synthetic telemetry loop">
+            <span id="sim-pause-icon">⏸</span>
+            <span id="sim-pause-text">Pause</span>
+          </button>
+          <button id="btn-sim-reset" class="btn-header sim-btn" type="button" title="Reset scenario state & session">
+            <span>↺</span>
+            <span>Restart Simulation</span>
+          </button>
+          <button id="btn-sim-fault" class="btn-header sim-btn" type="button" title="Toggle simulated sensor communications fault">
+            <span id="sim-fault-icon">⚠</span>
+            <span id="sim-fault-text">Simulate Fault</span>
+          </button>
+        </div>
+      </div>
+    </div>
 
     <!-- System Health & Connectivity Strip -->
     <section class="health-strip">
@@ -63,8 +139,8 @@
     <!-- Live Sensor Telemetry Cards -->
     <section>
       <div class="section-title">
-        <span>Live Sensor Telemetry</span>
-        <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
+        <span id="sensor-section-title">Live Sensor Telemetry</span>
+        <span id="sensor-section-subtitle" style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
           Actual Physical Readings Only
         </span>
       </div>
@@ -199,6 +275,149 @@
       </div>
     </section>
 
+    <!-- Sensor-Based Machine Learning Analytics Section -->
+    <section class="ml-analytics-section" id="ml-analytics-section" aria-label="Sensor Machine Learning Analytics">
+      <div class="section-title">
+        <div style="display: flex; align-items: center; gap: 10px;">
+          <span style="font-size: 1.1rem; font-weight: 700; color: var(--text-main);">Sensor Machine Learning Analytics</span>
+          <span class="ml-badge-model">Dual Numerical ML Pipeline</span>
+        </div>
+        <div class="ml-provenance-tag-wrap">
+          <span class="ml-disclaimer-tag">SYNTHETIC MODEL TEST — NOT REAL-WORLD VALIDATION</span>
+        </div>
+      </div>
+
+      <!-- ML Metrics & Cards Grid -->
+      <div class="sensor-grid ml-cards-grid">
+        <!-- ML Card 1: Sensor Anomaly Detection (Isolation Forest) -->
+        <article class="sensor-card ml-card" id="ml-card-anomaly">
+          <div class="card-header">
+            <div class="sensor-title-group">
+              <h3>Sensor Anomaly Detection</h3>
+              <span class="sensor-pin-label">Model A: Isolation Forest (Numerical)</span>
+            </div>
+            <span class="card-pill ok" id="ml-anomaly-pill">NORMAL</span>
+          </div>
+
+          <div class="card-main-metric">
+            <div class="metric-number-group">
+              <span class="metric-value" id="ml-anomaly-score">—</span>
+              <span class="metric-unit">/ 1.0</span>
+            </div>
+            <p class="metric-subtext" id="ml-anomaly-subtext">Calibrated threshold: 0.5600</p>
+          </div>
+
+          <!-- Anomaly Score Progress Bar -->
+          <div class="category-progress-bar" style="margin-bottom: 14px;">
+            <div class="category-progress-fill" id="ml-anomaly-bar" style="width: 0%; background-color: var(--accent-forest);"></div>
+          </div>
+
+          <div class="card-meta-list">
+            <div class="meta-row">
+              <span class="meta-label">Diagnostic Status</span>
+              <span class="meta-val" id="ml-anomaly-status-text">Nominal telemetry distribution</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Evaluation Metric (Test)</span>
+              <span class="meta-val" id="ml-anomaly-f1">F1: 62.6% (P: 65.2%, R: 60.2%)</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Data Provenance</span>
+              <span class="meta-val" id="ml-anomaly-provenance" style="font-weight: 600; color: var(--accent-teal);">SIMULATION</span>
+            </div>
+          </div>
+        </article>
+
+        <!-- ML Card 2: Waste Accumulation Forecaster (Random Forest) -->
+        <article class="sensor-card ml-card" id="ml-card-forecast">
+          <div class="card-header">
+            <div class="sensor-title-group">
+              <h3>Waste Mass Forecasting</h3>
+              <span class="sensor-pin-label">Model B: Multi-Horizon Random Forest</span>
+            </div>
+            <div class="ml-horizon-selector" role="group" aria-label="Forecast horizon selection">
+              <button class="btn-horizon active" id="btn-horizon-5m" data-horizon="5m">+5m</button>
+              <button class="btn-horizon" id="btn-horizon-15m" data-horizon="15m">+15m</button>
+              <button class="btn-horizon" id="btn-horizon-30m" data-horizon="30m">+30m</button>
+            </div>
+          </div>
+
+          <div class="card-main-metric">
+            <div class="metric-number-group">
+              <span class="metric-value" id="ml-forecast-val">—</span>
+              <span class="metric-unit">g</span>
+            </div>
+            <p class="metric-subtext" id="ml-forecast-subtext">95% Confidence Interval: [— – —]</p>
+          </div>
+
+          <div class="card-meta-list">
+            <div class="meta-row">
+              <span class="meta-label">Current Weight</span>
+              <span class="meta-val" id="ml-forecast-current">— g</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Projected Mass Delta</span>
+              <span class="meta-val" id="ml-forecast-delta">—</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Persistence Baseline</span>
+              <span class="meta-val" id="ml-forecast-baseline">— g</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Test MAE (vs Baseline)</span>
+              <span class="meta-val" id="ml-forecast-benchmark">808.7g (vs 1069.7g | Beats Baseline)</span>
+            </div>
+          </div>
+        </article>
+
+        <!-- ML Card 3: Model Lifecycle & System Health -->
+        <article class="sensor-card ml-card" id="ml-card-lifecycle">
+          <div class="card-header">
+            <div class="sensor-title-group">
+              <h3>ML Model Registry</h3>
+              <span class="sensor-pin-label">Artifact Status & Provenance</span>
+            </div>
+            <span class="card-pill ok" id="ml-service-pill">MODELS LOADED</span>
+          </div>
+
+          <div class="card-main-metric">
+            <div class="metric-number-group" style="font-size: 1.4rem;">
+              <span class="metric-value" id="ml-registry-version" style="font-size: 1.4rem;">v1.0.0</span>
+            </div>
+            <p class="metric-subtext" id="ml-registry-subtext">Trained on 24,200 synthetic records (Seed: 42)</p>
+          </div>
+
+          <div class="card-meta-list">
+            <div class="meta-row">
+              <span class="meta-label">Anomaly Detector</span>
+              <span class="meta-val" id="ml-meta-detector">IsolationForest (models/anomaly_detector.joblib)</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Weight Forecaster</span>
+              <span class="meta-val" id="ml-meta-forecaster">RandomForest (models/weight_forecaster.joblib)</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Microservice Status</span>
+              <span class="meta-val" id="ml-service-status-text">Online (FastAPI / 127.0.0.1:8000)</span>
+            </div>
+            <div class="meta-row">
+              <span class="meta-label">Physical Constraints</span>
+              <span class="meta-val">Bounded: 0.0g to 10,000.0g</span>
+            </div>
+          </div>
+        </article>
+      </div>
+
+      <!-- Explanatory Context Alert -->
+      <div class="alert-row info" style="margin-bottom: 24px; font-size: 0.8rem; background-color: var(--bg-surface); border: 1px solid var(--border-light); padding: 12px 16px; border-radius: var(--radius-md);">
+        <span style="font-weight: bold; color: var(--accent-amber);">ℹ NOTICE:</span>
+        <span style="color: var(--text-muted);">
+          Anomaly score is an uncalibrated isolation distance metric; higher scores reflect multivariate statistical deviation from nominal training profiles.
+          Evaluation benchmarks are evaluated strictly on synthetic test sessions and do NOT represent physical hardware certification.
+        </span>
+      </div>
+    </section>
+
     <!-- Two Waste Categories Section -->
     <section>
       <div class="section-title">
@@ -324,8 +543,8 @@
     <!-- Historical Analytics Charts -->
     <section>
       <div class="section-title">
-        <span>Historical Sensor Analytics</span>
-        <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
+        <span id="chart-section-title">Historical Sensor Analytics</span>
+        <span id="chart-section-subtitle" style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
           Rendered from Actual Backend Records (Zero Fabricated Points)
         </span>
       </div>

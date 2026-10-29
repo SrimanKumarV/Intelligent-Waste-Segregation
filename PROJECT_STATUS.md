@@ -57,9 +57,45 @@ The project has been refactored from a multi-sensor ESP32 proof-of-concept into 
 - [x] SVG historical analytics charts (Weight vs Time & Moisture vs Time) with honest empty states.
 - [x] Direct USB Web Serial connection support (direct browser-to-Uno connection via Chrome/Edge).
 
-### E. Documentation & Protocol
+### E. Dual-Mode Monitoring & Deterministic Simulation Engine
+- [x] Compact, accessible toggle switch in dashboard header (`role="switch"`, keyboard navigation via Space/Enter, debounce protection).
+- [x] Clear visual status banners:
+  - `LIVE HARDWARE MODE` — with connection indicators, last hardware timestamp, and disconnect notice.
+  - `SIMULATION MODE — SYNTHETIC DATA` — with session ID, start timestamp, scenario badge, and hardware isolation notice.
+- [x] Shared telemetry processing pipeline (`processTelemetryPacket`) ensuring zero duplicate UI rendering code.
+- [x] Deterministic synthetic sensor telemetry generator implementing:
+  - Capacitive moisture model with correlated raw 10-bit ADC (`50–980 ADC`) and moisture percentage (`0–100%`).
+  - HX711 load cell model with non-negative weight in grams and correlated raw counts.
+  - HC-SR04 ultrasonic proximity & lid actuator coherent state machine (Approach ≤ 20cm ➔ Lid OPEN 90° ➔ Hold 4s ➔ Lid CLOSE 0° ➔ Cooldown).
+  - Actuator safety: physical serial transmission and servo commands are disabled in Simulation Mode.
+- [x] Three configurable simulation scenarios:
+  - **Scenario A:** Normal Operation (slowly changing readings, natural visitor approaches, balanced organic/inorganic levels).
+  - **Scenario B:** Bin Filling (progressive mass accumulation +75–140g per cycle, rising organic moisture curve).
+  - **Scenario C:** Hardware Unavailable / Offline Fault (demonstrates system resilience and fault alerts without Arduino).
+- [x] Simulation controls panel: Scenario selector, interval speed (0.5s, 1.0s, 2.0s), Pause/Resume, Reset/Restart, and Simulate Fault toggle.
+- [x] Strict Data Provenance & Separation:
+  - Simulated packets carry `source: "simulation"` and `dev: "SIM-WS01"`.
+  - Zero synthetic packets written to `data/telemetry.jsonl`.
+  - Simulation charts render strictly from an in-memory rolling buffer (`simHistoryData`).
+- [x] Backend synchronization via `GET /api/monitoring/mode`, `POST /api/monitoring/mode`, and `GET /api/simulation/status`.
+- [x] Automated test suite in `test/test_simulation_mode.ps1` with 18 automated tests verifying mode switching, schema validation, and data separation.
+
+### F. Documentation & Protocol
 - [x] Updated `docs/PIN_MAPPING.md`, `docs/WIRING_GUIDE.md`, `docs/CALIBRATION_GUIDE.md`, and `docs/TEST_PLAN.md`.
 - [x] Created `docs/TELEMETRY_PROTOCOL.md` specifying JSON Lines schema and fault codes.
+
+### G. Sensor-Based Machine Learning Pipeline
+- [x] Physics-grounded synthetic telemetry generator (`ml/synthetic_data.py`) with 6 distinct operating scenarios.
+- [x] Reproducible synthetic dataset generator (`ml/generate_data.py`) with session-based train/val/test splits (24,200 records).
+- [x] Dual-mode batch & streaming feature extraction pipeline (`ml/features.py`).
+- [x] Model A: Isolation Forest Sensor Anomaly Detector (`ml/anomaly_detector.py`) with calibrated decision threshold and interpretable reasons.
+- [x] Model B: Multi-Horizon Random Forest Waste Forecaster (`ml/weight_forecaster.py`) evaluating +5m, +15m, and +30m horizons with persistence baseline comparison.
+- [x] Model C: Prototype Category Classifier (`ml/category_classifier.py`) with transparent synthetic disclaimers.
+- [x] Model training and artifact serialization script (`ml/train.py`) producing `.joblib` models and `model_metadata.json`.
+- [x] High-performance FastAPI ML inference microservice (`ml/service.py`) on port 8000.
+- [x] IoT backend reverse proxy routing for `/api/ml/*` in `server.ps1` and `server.js`.
+- [x] Operational dashboard ML Analytics UI with real-time anomaly progress bar, horizon selection buttons (`+5m`, `+15m`, `+30m`), and provenance badges.
+- [x] Automated test suite in `test/test_ml.py` (11 unit/integration tests) integrated into `test/run_tests.ps1`.
 
 ---
 

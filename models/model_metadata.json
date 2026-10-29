@@ -1,0 +1,95 @@
+{
+  "model_version": "1.0.0",
+  "training_timestamp": "2026-10-29T03:59:17.017948+00:00",
+  "random_seed": 42,
+  "dataset_path": "data/synthetic/sensor_readings.csv",
+  "training_sample_count": 17000,
+  "validation_sample_count": 3600,
+  "test_sample_count": 3600,
+  "feature_schema": [
+    "moist_pct_imputed",
+    "moist_raw",
+    "weight_g_imputed",
+    "weight_raw",
+    "dist_cm_imputed",
+    "prox_val",
+    "lid_is_open",
+    "weight_delta_1",
+    "moist_delta_1",
+    "weight_roll_mean_5",
+    "weight_roll_std_5",
+    "moist_roll_mean_5",
+    "moist_roll_std_5",
+    "moist_missing",
+    "weight_missing",
+    "dist_missing",
+    "moist_ok_val",
+    "weight_ok_val",
+    "fault_count"
+  ],
+  "models": {
+    "anomaly_detector": {
+      "algorithm": "IsolationForest",
+      "artifact": "anomaly_detector.joblib",
+      "calibrated_threshold": 0.56,
+      "metrics_on_test": {
+        "precision": 0.652,
+        "recall": 0.6018,
+        "f1_score": 0.6259,
+        "calibrated_threshold": 0.56,
+        "total_test_samples": 3600,
+        "true_anomalies": 442,
+        "predicted_anomalies": 408,
+        "evaluation_provenance": "SYNTHETIC SENSOR TEST \u2014 NOT REAL-WORLD VALIDATION"
+      }
+    },
+    "weight_forecaster": {
+      "algorithm": "RandomForestRegressor",
+      "artifact": "weight_forecaster.joblib",
+      "horizons": [
+        "5m",
+        "15m",
+        "30m"
+      ],
+      "metrics_on_test": {
+        "5m": {
+          "horizon_seconds": 300,
+          "model_mae_grams": 808.71,
+          "model_rmse_grams": 1110.11,
+          "baseline_persistence_mae_grams": 1069.67,
+          "baseline_persistence_rmse_grams": 1288.54,
+          "mae_improvement_grams": 260.97,
+          "beats_baseline": true,
+          "test_samples": 3535
+        },
+        "15m": {
+          "horizon_seconds": 900,
+          "model_mae_grams": 1193.09,
+          "model_rmse_grams": 1707.45,
+          "baseline_persistence_mae_grams": 1219.1,
+          "baseline_persistence_rmse_grams": 1460.21,
+          "mae_improvement_grams": 26.01,
+          "beats_baseline": true,
+          "test_samples": 3581
+        },
+        "30m": {
+          "horizon_seconds": 1800,
+          "model_mae_grams": 2237.44,
+          "model_rmse_grams": 3314.98,
+          "baseline_persistence_mae_grams": 1327.5,
+          "baseline_persistence_rmse_grams": 1559.27,
+          "mae_improvement_grams": -909.93,
+          "beats_baseline": false,
+          "test_samples": 3600
+        }
+      }
+    },
+    "category_classifier": {
+      "algorithm": "RandomForestClassifier",
+      "artifact": "category_classifier.joblib",
+      "is_experimental": true,
+      "disclaimer": "SYNTHETIC PROFILE INFERENCE \u2014 NOT REAL-WORLD MATERIAL VERIFICATION"
+    }
+  },
+  "provenance_statement": "SYNTHETIC MODEL TEST \u2014 NOT REAL-WORLD VALIDATION"
+}

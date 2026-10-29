@@ -22,6 +22,9 @@ const CATEGORIES_FILE = path.join(DATA_DIR, 'classifications.jsonl');
 let latestTelemetry = null;
 let lastReceivedTime = null;
 let lastLidState = 'CLOSED';
+let monitoringMode = 'hardware';
+let simulationStartedAt = null;
+let simulationSessionId = null;
 
 function getDeviceHealth() {
   if (!latestTelemetry) {
@@ -174,19 +177,99 @@ const server = http.createServer((req, res) => {
           res.end(JSON.stringify({ success: false, error: e.message }));
         }
       });
-    } else if (pathname === '/api/classification' && req.method === 'POST') {
+    } else if (pathname === '/api/monitoring/mode' && req.method === 'GET') {
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        mode: monitoringMode,
+        simulation_active: (monitoringMode === 'simulation'),
+        session_id: simulationSessionId,
+        started_at: simulationStartedAt,
+        timestamp: new Date().toISOString()
+      }));
+    } else if (pathname === '/api/monitoring/mode' && (req.method === 'POST' || req.method === 'PUT')) {
       let body = '';
       req.on('data', chunk => { body += chunk; });
       req.on('end', () => {
         try {
-          const rec = JSON.parse(body);
-          rec.recorded_at = new Date().toISOString();
-          fs.appendFileSync(CATEGORIES_FILE, JSON.stringify(rec) + '\n');
-          res.writeHead(200);
-          res.end(JSON.stringify({ success: true }));
+          const reqObj = JSON.parse(body);
+          const newMode = (reqObj.mode || '').toLowerCase().trim();
+          if (newMode === 'simulation' || newMode === 'hardware') {
+            const prevMode = monitoringMode;
+            monitoringMode = newMode;
+            if (newMode === 'simulation') {
+              if (!simulationStartedAt || prevMode !== 'simulation') {
+                simulationStartedAt = new Date().toISOString();
+                simulationSessionId = `SIM-${Math.floor(Date.now() / 1000)}`;
+              }
+            } else {
+              simulationStartedAt = null;
+              simulationSessionId = null;
+            }
+            res.writeHead(200);
+            res.end(JSON.stringify({
+              success: true,
+              mode: monitoringMode,
+              previous_mode: prevMode,
+              session_id: simulationSessionId,
+              started_at: simulationStartedAt
+            }));
+          } else {
+            res.writeHead(400);
+            res.end(JSON.stringify({ success: false, error: "Invalid mode. Must be 'hardware' or 'simulation'." }));
+          }
         } catch (e) {
           res.writeHead(400);
           res.end(JSON.stringify({ success: false, error: e.message }));
+        }
+      });
+    } else if (pathname === '/api/simulation/status' && req.method === 'GET') {
+      res.writeHead(200);
+      res.end(JSON.stringify({
+        simulation_enabled: (monitoringMode === 'simulation'),
+        session_id: simulationSessionId,
+        started_at: simulationStartedAt,
+        scenarios_available: ['SCENARIO_A', 'SCENARIO_B', 'SCENARIO_C'],
+        default_interval_ms: 1000,
+        hardware_isolated: true
+      }));
+    } else if (pathname.startsWith('/api/ml/')) {
+      const mlUrl = `http://127.0.0.1:8000${pathname}${parsedUrl.search || ''}`;
+      let postBody = '';
+      req.on('data', chunk => { postBody += chunk; });
+      req.on('end', () => {
+        try {
+          const urlObj = new URL(mlUrl);
+          const proxyReq = http.request({
+            hostname: urlObj.hostname,
+            port: urlObj.port,
+            path: urlObj.pathname + urlObj.search,
+            method: req.method,
+            headers: {
+              'Content-Type': 'application/json',
+              'Content-Length': Buffer.byteLength(postBody)
+            },
+            timeout: 2500
+          }, (proxyRes) => {
+            let data = '';
+            proxyRes.on('data', c => { data += c; });
+            proxyRes.on('end', () => {
+              res.writeHead(proxyRes.statusCode, { 'Content-Type': 'application/json; charset=utf-8' });
+              res.end(data);
+            });
+          });
+          proxyReq.on('error', (err) => {
+            res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+            res.end(JSON.stringify({
+              status: 'model_unavailable',
+              message: 'Python ML service offline on port 8000',
+              error: err.message
+            }));
+          });
+          if (postBody) proxyReq.write(postBody);
+          proxyReq.end();
+        } catch (e) {
+          res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+          res.end(JSON.stringify({ status: 'model_unavailable', error: e.message }));
         }
       });
     } else {

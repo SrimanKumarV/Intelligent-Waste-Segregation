@@ -25,12 +25,16 @@ $global:latestTelemetry = $null
 $global:lastReceivedTime = $null
 $global:lastLidState = "CLOSED"
 $global:commandQueue = [System.Collections.Generic.Queue[string]]::new()
+$global:monitoringMode = "hardware"
+$global:simulationStartedAt = $null
+$global:simulationSessionId = $null
 
 Write-Host "==========================================================" -ForegroundColor DarkGreen
 Write-Host " Intelligent Waste Segregation -- IoT Backend Server v2.0 " -ForegroundColor Green
 Write-Host "==========================================================" -ForegroundColor DarkGreen
 Write-Host " Dashboard Directory: $dashboardDir" -ForegroundColor Gray
 Write-Host " Data Storage:        $dataDir" -ForegroundColor Gray
+Write-Host " Default Mode:        $global:monitoringMode" -ForegroundColor Yellow
 Write-Host " Listening on:        http://localhost:$Port/" -ForegroundColor Cyan
 
 $listener = New-Object System.Net.HttpListener
@@ -263,6 +267,105 @@ try {
                 $cmdObj = $body | ConvertFrom-Json
                 $global:commandQueue.Enqueue($cmdObj.command)
                 $json = @{ success = $true; queued = $cmdObj.command } | ConvertTo-Json
+                $buf = [System.Text.Encoding]::UTF8.GetBytes($json)
+                $response.OutputStream.Write($buf, 0, $buf.Length)
+            }
+            elseif ($path -eq "/api/monitoring/mode" -and $request.HttpMethod -eq "GET") {
+                $payload = @{
+                    mode = $global:monitoringMode
+                    simulation_active = ($global:monitoringMode -eq "simulation")
+                    session_id = $global:simulationSessionId
+                    started_at = $global:simulationStartedAt
+                    timestamp = (Get-Date).ToString("o")
+                }
+                $json = $payload | ConvertTo-Json
+                $buf = [System.Text.Encoding]::UTF8.GetBytes($json)
+                $response.OutputStream.Write($buf, 0, $buf.Length)
+            }
+            elseif ($path -eq "/api/monitoring/mode" -and ($request.HttpMethod -eq "POST" -or $request.HttpMethod -eq "PUT")) {
+                $reader = New-Object System.IO.StreamReader($request.InputStream, [System.Text.Encoding]::UTF8)
+                $body = $reader.ReadToEnd()
+                $reader.Close()
+
+                try {
+                    $reqObj = $body | ConvertFrom-Json
+                    $newMode = "$($reqObj.mode)".ToLower().Trim()
+                    if ($newMode -eq "simulation" -or $newMode -eq "hardware") {
+                        $prevMode = $global:monitoringMode
+                        $global:monitoringMode = $newMode
+                        if ($newMode -eq "simulation") {
+                            if ($null -eq $global:simulationStartedAt -or $prevMode -ne "simulation") {
+                                $global:simulationStartedAt = (Get-Date).ToString("o")
+                                $global:simulationSessionId = "SIM-$([DateTimeOffset]::UtcNow.ToUnixTimeSeconds())"
+                            }
+                        } else {
+                            $global:simulationStartedAt = $null
+                            $global:simulationSessionId = $null
+                        }
+                        $payload = @{
+                            success = $true
+                            mode = $global:monitoringMode
+                            previous_mode = $prevMode
+                            session_id = $global:simulationSessionId
+                            started_at = $global:simulationStartedAt
+                        }
+                        $json = $payload | ConvertTo-Json
+                    } else {
+                        $response.StatusCode = 400
+                        $json = @{ success = $false; error = "Invalid mode. Must be 'hardware' or 'simulation'." } | ConvertTo-Json
+                    }
+                } catch {
+                    $response.StatusCode = 400
+                    $json = @{ success = $false; error = $_.Exception.Message } | ConvertTo-Json
+                }
+                $buf = [System.Text.Encoding]::UTF8.GetBytes($json)
+                $response.OutputStream.Write($buf, 0, $buf.Length)
+            }
+            elseif ($path -eq "/api/simulation/status" -and $request.HttpMethod -eq "GET") {
+                $payload = @{
+                    simulation_enabled = ($global:monitoringMode -eq "simulation")
+                    session_id = $global:simulationSessionId
+                    started_at = $global:simulationStartedAt
+                    scenarios_available = @("SCENARIO_A", "SCENARIO_B", "SCENARIO_C")
+                    default_interval_ms = 1000
+                    hardware_isolated = $true
+                }
+                $json = $payload | ConvertTo-Json -Depth 3
+                $buf = [System.Text.Encoding]::UTF8.GetBytes($json)
+                $response.OutputStream.Write($buf, 0, $buf.Length)
+            }
+            elseif ($path.StartsWith("/api/ml/")) {
+                $mlTargetUri = "http://127.0.0.1:8000" + $path + $request.Url.Query
+                try {
+                    $mlReq = [System.Net.HttpWebRequest]::Create($mlTargetUri)
+                    $mlReq.Method = $request.HttpMethod
+                    $mlReq.Timeout = 2500
+                    $mlReq.ContentType = "application/json"
+
+                    if ($request.HttpMethod -eq "POST" -or $request.HttpMethod -eq "PUT") {
+                        $reader = New-Object System.IO.StreamReader($request.InputStream, [System.Text.Encoding]::UTF8)
+                        $postBody = $reader.ReadToEnd()
+                        $reader.Close()
+                        $byteData = [System.Text.Encoding]::UTF8.GetBytes($postBody)
+                        $mlReq.ContentLength = $byteData.Length
+                        $reqStream = $mlReq.GetRequestStream()
+                        $reqStream.Write($byteData, 0, $byteData.Length)
+                        $reqStream.Close()
+                    }
+
+                    $mlResp = $mlReq.GetResponse()
+                    $respStream = $mlResp.GetResponseStream()
+                    $sr = New-Object System.IO.StreamReader($respStream, [System.Text.Encoding]::UTF8)
+                    $json = $sr.ReadToEnd()
+                    $sr.Close()
+                    $mlResp.Close()
+                } catch {
+                    $json = @{
+                        status = "model_unavailable"
+                        message = "Python ML microservice is offline or unreachable on http://127.0.0.1:8000"
+                        error = $_.Exception.Message
+                    } | ConvertTo-Json
+                }
                 $buf = [System.Text.Encoding]::UTF8.GetBytes($json)
                 $response.OutputStream.Write($buf, 0, $buf.Length)
             }
