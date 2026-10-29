@@ -1,7 +1,9 @@
 """
-Intelligent Waste Segregation Analytics — Realistic Synthetic IoT Data Engine
-Physics-grounded, temporally correlated simulation of capacitive moisture,
-HX711 load cell, HC-SR04 ultrasonic proximity, and non-blocking servo lid actuation.
+Intelligent Waste Segregation Analytics — Realistic Multi-Channel Synthetic IoT Data Engine
+Physics-grounded, temporally correlated simulation of:
+  - Module A (Arduino Uno): HC-SR04 ultrasonic proximity and autonomous servo lid actuation
+  - Module B (ESP32): Capacitive Moisture C1 & C2, HX711 Load Cell 1 & 2
+  - Dual Microcontroller health and communications
 """
 
 import math
@@ -11,35 +13,36 @@ from typing import Dict, Any, List, Optional, Tuple
 
 
 class SyntheticSensorConfig:
-    """Hardware calibration parameters and physical limits matching Arduino Uno firmware."""
+    """Hardware calibration parameters and physical limits matching dual-MCU firmware."""
 
-    # Moisture Sensor (Capacitive Analog A0: Lower ADC = Higher Moisture)
-    MOISTURE_AIR_RAW_DEFAULT: int = 620      # Dry air (0% moisture)
-    MOISTURE_WATER_RAW_DEFAULT: int = 290    # Water submerged (100% moisture)
-    MOISTURE_ADC_MIN_VALID: int = 50         # Below indicates short circuit
-    MOISTURE_ADC_MAX_VALID: int = 980        # Above indicates open circuit / disconnect
+    # Module B: ESP32 12-Bit ADC (0 to 4095, 3.3V Logic)
+    # Lower raw ADC = Higher moisture
+    MOISTURE_AIR_RAW_DEFAULT: int = 3200      # Dry air (0% moisture)
+    MOISTURE_WATER_RAW_DEFAULT: int = 1400    # Water submerged (100% moisture)
+    MOISTURE_ADC_MIN_VALID: int = 200         # Below indicates short circuit to GND
+    MOISTURE_ADC_MAX_VALID: int = 3950        # Above indicates open circuit / disconnect
 
-    # Load Cell + HX711 (Digital D2/D3)
-    HX711_CALIBRATION_FACTOR: float = 420.0  # Raw counts per gram
-    HX711_TARE_OFFSET: int = 100000          # Baseline raw counts at 0g
-    WEIGHT_MAX_CAPACITY_GRAMS: float = 10000.0  # 10 kg maximum sanity limit
-    WEIGHT_MIN_VALID_GRAMS: float = 2.0      # Tare jitter noise floor
+    # Load Cell 1 & 2 + HX711
+    HX711_CALIBRATION_FACTOR: float = 420.0   # Raw counts per gram
+    HX711_TARE_OFFSET: int = 100000           # Baseline raw counts at 0g
+    WEIGHT_MAX_CAPACITY_GRAMS: float = 10000.0# 10 kg maximum sanity limit
+    WEIGHT_MIN_VALID_GRAMS: float = 2.0       # Tare jitter noise floor
 
-    # HC-SR04 Ultrasonic Sensor (Digital D4/D5)
-    PROXIMITY_THRESHOLD_CM: float = 20.0     # Target threshold for lid opening
-    PROXIMITY_DEBOUNCE_COUNT: int = 2        # Consecutive cycles to trigger lid
-    ULTRASONIC_MIN_VALID_CM: float = 2.0     # Sensor blind spot minimum
-    ULTRASONIC_MAX_VALID_CM: float = 200.0   # Plausible range limit
+    # Module A: Arduino Uno HC-SR04 Ultrasonic Sensor (Digital D4/D5)
+    PROXIMITY_THRESHOLD_CM: float = 20.0      # Target threshold for lid opening
+    PROXIMITY_DEBOUNCE_COUNT: int = 2         # Consecutive cycles to trigger lid
+    ULTRASONIC_MIN_VALID_CM: float = 2.0      # Sensor blind spot minimum
+    ULTRASONIC_MAX_VALID_CM: float = 200.0    # Plausible range limit
 
     # Lid Servo Actuator (PWM D6)
-    LID_HOLD_DURATION_S: float = 4.0         # Seconds lid stays open after approach
-    LID_COOLDOWN_DURATION_S: float = 1.5     # Seconds after close before re-opening
+    LID_HOLD_DURATION_S: float = 4.0          # Seconds lid stays open after approach
+    LID_COOLDOWN_DURATION_S: float = 1.5      # Seconds after close before re-opening
 
 
 class SyntheticTelemetryGenerator:
     """
-    Generates realistic, physically grounded IoT telemetry for the waste segregation bin.
-    Maintains temporal continuity across sequential ticks and simulates coherent events.
+    Generates realistic, physically grounded IoT telemetry for the 4-channel waste segregation system.
+    Simulates independent Module A (Uno) and Module B (ESP32) device streams.
     """
 
     def __init__(
@@ -62,349 +65,370 @@ class SyntheticTelemetryGenerator:
         self.seq = 0
         self.uptime_s = 0
 
-        # Physical state variables
-        self.current_weight_g: float = 0.0
-        self.current_moisture_pct: float = 12.0  # Initial dry bin moisture
+        # Physical states for Compartment A (Biodegradable: C1 + LC1)
+        self.lc1_weight_g: float = 50.0
+        self.c1_moisture_pct: float = 65.0   # Wet organic profile
+
+        # Physical states for Compartment B (Non-Biodegradable: C2 + LC2)
+        self.lc2_weight_g: float = 40.0
+        self.c2_moisture_pct: float = 14.0   # Dry packaging/inorganic profile
+
+        # Module A (Arduino Uno): Proximity & Lid
         self.ambient_distance_cm: float = 72.0
         self.current_distance_cm: float = 72.0
         self.proximity_debounce_counter: int = 0
         self.lid_cmd: str = "CLOSED"
         self.lid_state_timer: float = 0.0
-        self.lid_closed_time: float = -100.0  # Timestamp of last closure
+        self.lid_closed_time: float = -100.0
 
-        # Proximity interaction cycle state
-        # 'IDLE' -> 'APPROACHING' -> 'AT_BIN' -> 'DEPARTING' -> 'COOLDOWN'
+        # Human interaction cycle
         self.interaction_state: str = "IDLE"
         self.interaction_ticks_left: int = 0
+        self.pending_deposit_target: str = "LC1" # LC1 or LC2
         self.pending_deposit_mass: float = 0.0
-        self.pending_deposit_moisture: float = 0.0
-        self.pending_deposit_category: str = "NON_BIODEGRADABLE"
+        self.pending_deposit_moist: float = 0.0
 
         # Fault injection state
         self.injected_fault: Optional[str] = None
         self.fault_duration_ticks: int = 0
-        self.stuck_moisture_raw: Optional[int] = None
-        self.stuck_weight_raw: Optional[int] = None
+        self.stuck_c1_raw: Optional[int] = None
+        self.stuck_lc1_raw: Optional[int] = None
 
-        # Calibration drift state
-        self.air_raw_drift: float = 0.0
-        self.tare_drift: float = 0.0
-
-        # Setup initial conditions based on scenario
         self._init_scenario(self.scenario)
 
     def _init_scenario(self, scenario: str) -> None:
-        """Initialize initial state based on the chosen scenario."""
         self.scenario = scenario
         if scenario == "NORMAL_OPERATION":
-            self.current_weight_g = self.rng.uniform(20.0, 150.0)
-            self.current_moisture_pct = self.rng.uniform(15.0, 45.0)
-        elif scenario == "WASTE_ACCUMULATION":
-            self.current_weight_g = self.rng.uniform(0.0, 50.0)
-            self.current_moisture_pct = self.rng.uniform(20.0, 35.0)
-        elif scenario == "WET_WASTE_PROFILE":
-            self.current_weight_g = self.rng.uniform(100.0, 300.0)
-            self.current_moisture_pct = self.rng.uniform(65.0, 85.0)
-        elif scenario == "DRY_WASTE_PROFILE":
-            self.current_weight_g = self.rng.uniform(50.0, 200.0)
-            self.current_moisture_pct = self.rng.uniform(8.0, 22.0)
-        elif scenario == "HIGH_USAGE":
-            self.current_weight_g = self.rng.uniform(50.0, 200.0)
-            self.current_moisture_pct = self.rng.uniform(30.0, 60.0)
+            self.lc1_weight_g = self.rng.uniform(30.0, 150.0)
+            self.c1_moisture_pct = self.rng.uniform(55.0, 75.0)
+            self.lc2_weight_g = self.rng.uniform(20.0, 120.0)
+            self.c2_moisture_pct = self.rng.uniform(10.0, 22.0)
+        elif scenario == "BIN1_ACCUMULATION":
+            self.lc1_weight_g = self.rng.uniform(10.0, 40.0)
+            self.c1_moisture_pct = self.rng.uniform(60.0, 80.0)
+            self.lc2_weight_g = self.rng.uniform(10.0, 50.0)
+            self.c2_moisture_pct = self.rng.uniform(10.0, 18.0)
+        elif scenario == "BIN2_ACCUMULATION":
+            self.lc1_weight_g = self.rng.uniform(20.0, 60.0)
+            self.c1_moisture_pct = self.rng.uniform(50.0, 70.0)
+            self.lc2_weight_g = self.rng.uniform(10.0, 30.0)
+            self.c2_moisture_pct = self.rng.uniform(8.0, 16.0)
+        elif scenario == "UNO_DISCONNECTED":
+            self.lc1_weight_g = self.rng.uniform(100.0, 300.0)
+            self.c1_moisture_pct = self.rng.uniform(60.0, 75.0)
+            self.lc2_weight_g = self.rng.uniform(80.0, 200.0)
+            self.c2_moisture_pct = self.rng.uniform(12.0, 20.0)
+        elif scenario == "ESP32_DISCONNECTED":
+            self.lc1_weight_g = 0.0
+            self.c1_moisture_pct = 0.0
+            self.lc2_weight_g = 0.0
+            self.c2_moisture_pct = 0.0
         elif scenario == "SENSOR_FAULTS":
-            self.current_weight_g = self.rng.uniform(150.0, 400.0)
-            self.current_moisture_pct = self.rng.uniform(35.0, 55.0)
-        elif scenario == "HARDWARE_UNAVAILABLE":
-            self.current_weight_g = 0.0
-            self.current_moisture_pct = 0.0
+            self.lc1_weight_g = self.rng.uniform(150.0, 400.0)
+            self.c1_moisture_pct = self.rng.uniform(40.0, 60.0)
+            self.lc2_weight_g = self.rng.uniform(100.0, 250.0)
+            self.c2_moisture_pct = self.rng.uniform(15.0, 30.0)
 
     def inject_fault(self, fault_type: str, duration_ticks: int = 15) -> None:
-        """Inject a specific sensor fault for a given number of ticks."""
         self.injected_fault = fault_type
         self.fault_duration_ticks = duration_ticks
 
     def _trigger_approach_event(self) -> None:
-        """Initiate a person approaching the bin to dispose of waste."""
         self.interaction_state = "APPROACHING"
-        # 3 to 6 ticks to approach the bin
-        self.interaction_ticks_left = self.rng.randint(2, 5)
+        self.interaction_ticks_left = self.rng.randint(2, 4)
 
-        # Plan the incoming waste item
-        if self.scenario == "WET_WASTE_PROFILE":
-            self.pending_deposit_category = "BIODEGRADABLE"
-            self.pending_deposit_mass = self.rng.uniform(60.0, 320.0)
-            self.pending_deposit_moisture = self.rng.uniform(65.0, 92.0)
-        elif self.scenario == "DRY_WASTE_PROFILE":
-            self.pending_deposit_category = "NON_BIODEGRADABLE"
-            self.pending_deposit_mass = self.rng.uniform(15.0, 140.0)
-            self.pending_deposit_moisture = self.rng.uniform(5.0, 22.0)
+        # Decide whether visitor disposes into Compartment A or B
+        if self.scenario == "BIN1_ACCUMULATION":
+            self.pending_deposit_target = "LC1"
+            self.pending_deposit_mass = self.rng.uniform(80.0, 280.0)
+            self.pending_deposit_moist = self.rng.uniform(65.0, 90.0)
+        elif self.scenario == "BIN2_ACCUMULATION":
+            self.pending_deposit_target = "LC2"
+            self.pending_deposit_mass = self.rng.uniform(25.0, 160.0)
+            self.pending_deposit_moist = self.rng.uniform(5.0, 20.0)
         else:
-            # 50/50 mix for general scenarios
-            if self.rng.random() < 0.5:
-                self.pending_deposit_category = "BIODEGRADABLE"
-                self.pending_deposit_mass = self.rng.uniform(40.0, 250.0)
-                self.pending_deposit_moisture = self.rng.uniform(55.0, 88.0)
+            if self.rng.random() < 0.55:
+                self.pending_deposit_target = "LC1"
+                self.pending_deposit_mass = self.rng.uniform(50.0, 220.0)
+                self.pending_deposit_moist = self.rng.uniform(60.0, 85.0)
             else:
-                self.pending_deposit_category = "NON_BIODEGRADABLE"
-                self.pending_deposit_mass = self.rng.uniform(20.0, 180.0)
-                self.pending_deposit_moisture = self.rng.uniform(8.0, 28.0)
+                self.pending_deposit_target = "LC2"
+                self.pending_deposit_mass = self.rng.uniform(20.0, 130.0)
+                self.pending_deposit_moist = self.rng.uniform(8.0, 22.0)
 
     def next_record(self) -> Dict[str, Any]:
-        """
-        Advances simulation by sampling_interval_s and returns a telemetry record dictionary.
-        """
         self.seq += 1
         self.uptime_s += int(self.sampling_interval_s)
         self.current_time += timedelta(seconds=self.sampling_interval_s)
 
         fault_list: List[str] = []
-        is_synthetic_anomaly: bool = False
+        is_synthetic_anomaly = False
         anomaly_reasons: List[str] = []
 
-        # Stochastic fault trigger for SENSOR_FAULTS scenario
-        if self.scenario == "SENSOR_FAULTS" and not self.injected_fault:
-            if self.rng.random() < 0.04:  # 4% chance per second
-                fault_choice = self.rng.choice([
-                    "MOISTURE_OFFLINE",
-                    "HX711_TIMEOUT",
-                    "ULTRASONIC_TIMEOUT",
-                    "STUCK_VALUES",
-                    "SUDDEN_SPIKE"
-                ])
-                self.inject_fault(fault_choice, duration_ticks=self.rng.randint(8, 20))
-
-        if self.scenario == "HARDWARE_UNAVAILABLE":
-            fault_list.append("HARDWARE_UNAVAILABLE")
-
         # --------------------------------------------------------------------
-        # 2. PROXIMITY & LID DYNAMICS
+        # 1. ULTRASONIC & LID STATE MACHINE (MODULE A: ARDUINO UNO)
         # --------------------------------------------------------------------
-        # Decide whether to spawn a new visitor event if idle
-        in_cooldown = (self.uptime_s - self.lid_closed_time) < self.config.LID_COOLDOWN_DURATION_S
+        uno_connected = True
+        if self.scenario == "UNO_DISCONNECTED" or self.injected_fault == "UNO_OFFLINE":
+            uno_connected = False
+            fault_list.append("UNO_OFFLINE")
+            is_synthetic_anomaly = True
+            anomaly_reasons.append("Arduino Uno (Module A) communication lost")
 
-        if self.interaction_state == "IDLE" and not in_cooldown:
-            approach_prob = 0.03  # Normal default ~ once per 33s
-            if self.scenario == "HIGH_USAGE":
-                approach_prob = 0.12  # High usage ~ once per 8s
-            elif self.scenario == "WASTE_ACCUMULATION":
-                approach_prob = 0.06
-
-            if self.rng.random() < approach_prob:
-                self._trigger_approach_event()
-
-        # Update interaction distance trajectory
+        # Proximity interaction progression
         if self.interaction_state == "IDLE":
-            # Ambient distance fluctuates gently around baseline 60-80cm
-            noise = self.rng.gauss(0.0, 0.4)
-            self.current_distance_cm = max(45.0, min(120.0, self.ambient_distance_cm + noise))
-            self.interaction_ticks_left = 0
+            prob_approach = 0.08
+            if self.scenario in ("BIN1_ACCUMULATION", "BIN2_ACCUMULATION"):
+                prob_approach = 0.16
+            if self.rng.random() < prob_approach and (self.uptime_s - self.lid_closed_time) > self.config.LID_COOLDOWN_DURATION_S:
+                self._trigger_approach_event()
+            else:
+                self.current_distance_cm = self.ambient_distance_cm + self.rng.gauss(0.0, 1.2)
 
         elif self.interaction_state == "APPROACHING":
-            # Distance drops from ambient towards ~12-16cm
-            step = (self.current_distance_cm - 14.0) / max(1, self.interaction_ticks_left)
-            self.current_distance_cm = max(10.0, self.current_distance_cm - step + self.rng.gauss(0.0, 0.5))
             self.interaction_ticks_left -= 1
+            progress = 1.0 - (self.interaction_ticks_left / 4.0)
+            self.current_distance_cm = 72.0 - progress * (72.0 - self.rng.uniform(8.0, 16.0))
             if self.interaction_ticks_left <= 0:
                 self.interaction_state = "AT_BIN"
-                self.interaction_ticks_left = self.rng.randint(3, 7)  # Stay 3-7s at bin
+                self.interaction_ticks_left = self.rng.randint(3, 6)
 
         elif self.interaction_state == "AT_BIN":
-            # Person stands in front of bin, depositing waste
-            self.current_distance_cm = self.rng.uniform(10.0, 16.5)
             self.interaction_ticks_left -= 1
+            self.current_distance_cm = self.rng.uniform(6.0, 15.0)
 
-            # While at bin with open lid, apply the deposit mass & moisture change
-            if self.lid_cmd == "OPEN" and self.pending_deposit_mass > 0:
-                fraction = 0.5 if self.interaction_ticks_left > 1 else 1.0
-                deposited_now = self.pending_deposit_mass * fraction
-                self.pending_deposit_mass -= deposited_now
-                self.current_weight_g += deposited_now
-
-                # Blend moisture: wet waste raises moisture, dry lowers moisture
-                alpha = min(0.6, deposited_now / max(10.0, self.current_weight_g))
-                self.current_moisture_pct = (
-                    (1.0 - alpha) * self.current_moisture_pct + alpha * self.pending_deposit_moisture
-                )
+            # Apply deposit halfway through visit
+            if self.interaction_ticks_left == 2:
+                if self.pending_deposit_target == "LC1":
+                    self.lc1_weight_g += self.pending_deposit_mass
+                    self.c1_moisture_pct = 0.7 * self.c1_moisture_pct + 0.3 * self.pending_deposit_moist
+                else:
+                    self.lc2_weight_g += self.pending_deposit_mass
+                    self.c2_moisture_pct = 0.8 * self.c2_moisture_pct + 0.2 * self.pending_deposit_moist
 
             if self.interaction_ticks_left <= 0:
                 self.interaction_state = "DEPARTING"
-                self.interaction_ticks_left = self.rng.randint(2, 4)
+                self.interaction_ticks_left = self.rng.randint(2, 3)
 
         elif self.interaction_state == "DEPARTING":
-            # Distance increases back to ambient
-            step = (self.ambient_distance_cm - self.current_distance_cm) / max(1, self.interaction_ticks_left)
-            self.current_distance_cm = min(120.0, self.current_distance_cm + step + self.rng.gauss(0.0, 0.5))
             self.interaction_ticks_left -= 1
+            self.current_distance_cm = self.rng.uniform(28.0, 65.0)
             if self.interaction_ticks_left <= 0:
                 self.interaction_state = "IDLE"
+                self.current_distance_cm = self.ambient_distance_cm
 
-        # Occasional bin emptying in WASTE_ACCUMULATION when heavy
-        if self.scenario == "WASTE_ACCUMULATION" and self.current_weight_g > 3500.0:
-            if self.rng.random() < 0.02:  # 2% chance when full
-                self.current_weight_g = self.rng.uniform(0.0, 8.0)
-                self.current_moisture_pct = 15.0
-
-        # Proximity evaluation with firmware debounce logic (2 consecutive cycles <= 20.0 cm)
-        raw_prox_detected = (self.current_distance_cm <= self.config.PROXIMITY_THRESHOLD_CM)
-
-        if raw_prox_detected:
-            self.proximity_debounce_counter += 1
+        # Debounce proximity detection
+        measured_dist = max(2.0, min(200.0, self.current_distance_cm))
+        is_in_proximity = (measured_dist <= self.config.PROXIMITY_THRESHOLD_CM)
+        if is_in_proximity:
+            self.proximity_debounce_counter = min(5, self.proximity_debounce_counter + 1)
         else:
             self.proximity_debounce_counter = 0
 
         debounced_prox = (self.proximity_debounce_counter >= self.config.PROXIMITY_DEBOUNCE_COUNT)
 
-        # Firmware Lid State Machine
+        # Autonomous Lid State Machine
         if self.lid_cmd == "CLOSED":
-            if debounced_prox and not in_cooldown:
+            if debounced_prox and (self.uptime_s - self.lid_closed_time) >= self.config.LID_COOLDOWN_DURATION_S:
                 self.lid_cmd = "OPEN"
-                self.lid_state_timer = self.config.LID_HOLD_DURATION_S
+                self.lid_state_timer = self.uptime_s
         elif self.lid_cmd == "OPEN":
             if debounced_prox:
-                # Reset hold duration as long as person remains in front
-                self.lid_state_timer = self.config.LID_HOLD_DURATION_S
+                self.lid_state_timer = self.uptime_s  # Keep holding open
+            elif (self.uptime_s - self.lid_state_timer) >= self.config.LID_HOLD_DURATION_S:
+                self.lid_cmd = "CLOSED"
+                self.lid_closed_time = self.uptime_s
+
+        dist_cm: Optional[float] = round(measured_dist, 1) if uno_connected else None
+
+        # --------------------------------------------------------------------
+        # 2. MODULE B (ESP32): 4 INDEPENDENT SENSOR CHANNELS
+        # --------------------------------------------------------------------
+        esp32_connected = True
+        if self.scenario == "ESP32_DISCONNECTED" or self.injected_fault == "ESP32_OFFLINE":
+            esp32_connected = False
+            fault_list.append("ESP32_OFFLINE")
+            is_synthetic_anomaly = True
+            anomaly_reasons.append("ESP32 Hub (Module B) communication lost")
+
+        # --- Channel C1 (Compartment A: Biodegradable Moisture) ---
+        c1_pct: Optional[float] = None
+        c1_raw: Optional[int] = None
+        c1_ok = False
+        c1_cal = True
+
+        if esp32_connected:
+            noise_c1 = self.rng.gauss(0.0, 0.4)
+            c1_pct_val = max(0.0, min(100.0, self.c1_moisture_pct + noise_c1))
+            span_c1 = self.config.MOISTURE_AIR_RAW_DEFAULT - self.config.MOISTURE_WATER_RAW_DEFAULT
+            c1_raw_calc = self.config.MOISTURE_AIR_RAW_DEFAULT - (c1_pct_val / 100.0) * span_c1 + self.rng.gauss(0.0, 3.0)
+            c1_raw = int(max(0, min(4095, round(c1_raw_calc))))
+
+            if self.injected_fault == "C1_OFFLINE":
+                c1_raw = 4095
+                c1_pct = None
+                c1_ok = False
+                fault_list.append("C1_MOISTURE_OFFLINE")
+                is_synthetic_anomaly = True
+                anomaly_reasons.append("Capacitive Sensor C1 disconnected (>3950 ADC)")
             else:
-                self.lid_state_timer -= self.sampling_interval_s
-                if self.lid_state_timer <= 0:
-                    self.lid_cmd = "CLOSED"
-                    self.lid_closed_time = self.uptime_s
+                c1_ok = (c1_raw >= self.config.MOISTURE_ADC_MIN_VALID and c1_raw <= self.config.MOISTURE_ADC_MAX_VALID)
+                c1_pct = round(c1_pct_val, 1) if c1_ok else None
 
-        # --------------------------------------------------------------------
-        # 3. ULTRASONIC SENSOR OUTPUT
-        # --------------------------------------------------------------------
-        dist_cm: Optional[float] = round(self.current_distance_cm, 1)
+        # --- Channel C2 (Compartment B: Non-Biodegradable Moisture) ---
+        c2_pct: Optional[float] = None
+        c2_raw: Optional[int] = None
+        c2_ok = False
+        c2_cal = True
 
-        if self.injected_fault == "ULTRASONIC_TIMEOUT":
-            dist_cm = None
-            debounced_prox = False
-            fault_list.append("ULTRASONIC_TIMEOUT")
+        if esp32_connected:
+            noise_c2 = self.rng.gauss(0.0, 0.3)
+            c2_pct_val = max(0.0, min(100.0, self.c2_moisture_pct + noise_c2))
+            span_c2 = self.config.MOISTURE_AIR_RAW_DEFAULT - self.config.MOISTURE_WATER_RAW_DEFAULT
+            c2_raw_calc = self.config.MOISTURE_AIR_RAW_DEFAULT - (c2_pct_val / 100.0) * span_c2 + self.rng.gauss(0.0, 3.0)
+            c2_raw = int(max(0, min(4095, round(c2_raw_calc))))
+
+            if self.injected_fault == "C2_OFFLINE":
+                c2_raw = 4095
+                c2_pct = None
+                c2_ok = False
+                fault_list.append("C2_MOISTURE_OFFLINE")
+                is_synthetic_anomaly = True
+                anomaly_reasons.append("Capacitive Sensor C2 disconnected (>3950 ADC)")
+            else:
+                c2_ok = (c2_raw >= self.config.MOISTURE_ADC_MIN_VALID and c2_raw <= self.config.MOISTURE_ADC_MAX_VALID)
+                c2_pct = round(c2_pct_val, 1) if c2_ok else None
+
+        # --- Channel LC1 (Compartment A: Biodegradable Mass) ---
+        lc1_g: Optional[float] = None
+        lc1_raw: Optional[int] = None
+        lc1_ok = False
+        lc1_cal = True
+
+        if esp32_connected:
+            lc1_val = max(0.0, min(self.config.WEIGHT_MAX_CAPACITY_GRAMS, self.lc1_weight_g + self.rng.gauss(0.0, 0.4)))
+            lc1_raw = int(self.config.HX711_TARE_OFFSET + lc1_val * self.config.HX711_CALIBRATION_FACTOR + self.rng.gauss(0.0, 8.0))
+
+            if self.injected_fault == "LC1_TIMEOUT":
+                lc1_g = None
+                lc1_raw = 0
+                lc1_ok = False
+                fault_list.append("LC1_HX711_TIMEOUT")
+                is_synthetic_anomaly = True
+                anomaly_reasons.append("Load Cell 1 timeout: HX711 not responding")
+            elif self.injected_fault == "LC1_SPIKE":
+                lc1_raw += 900000
+                lc1_g = round((lc1_raw - self.config.HX711_TARE_OFFSET) / self.config.HX711_CALIBRATION_FACTOR, 1)
+                lc1_ok = True
+                is_synthetic_anomaly = True
+                anomaly_reasons.append("Load Cell 1 abnormal mass jump")
+            else:
+                lc1_ok = True
+                lc1_g = round(lc1_val, 1)
+
+        # --- Channel LC2 (Compartment B: Non-Biodegradable Mass) ---
+        lc2_g: Optional[float] = None
+        lc2_raw: Optional[int] = None
+        lc2_ok = False
+        lc2_cal = True
+
+        if esp32_connected:
+            lc2_val = max(0.0, min(self.config.WEIGHT_MAX_CAPACITY_GRAMS, self.lc2_weight_g + self.rng.gauss(0.0, 0.4)))
+            lc2_raw = int(self.config.HX711_TARE_OFFSET + lc2_val * self.config.HX711_CALIBRATION_FACTOR + self.rng.gauss(0.0, 8.0))
+
+            if self.injected_fault == "LC2_TIMEOUT":
+                lc2_g = None
+                lc2_raw = 0
+                lc2_ok = False
+                fault_list.append("LC2_HX711_TIMEOUT")
+                is_synthetic_anomaly = True
+                anomaly_reasons.append("Load Cell 2 timeout: HX711 not responding")
+            else:
+                lc2_ok = True
+                lc2_g = round(lc2_val, 1)
+
+        # Calibration fault simulation
+        if self.injected_fault == "CALIBRATION_REQUIRED":
+            c1_cal = False
+            lc1_cal = False
+            fault_list.append("CALIBRATION_REQUIRED")
             is_synthetic_anomaly = True
-            anomaly_reasons.append("Ultrasonic sensor timeout: echo missing or out of range")
-        elif dist_cm is not None and (dist_cm < self.config.ULTRASONIC_MIN_VALID_CM or dist_cm > self.config.ULTRASONIC_MAX_VALID_CM):
-            dist_cm = None
-            debounced_prox = False
-            fault_list.append("ULTRASONIC_TIMEOUT")
+            anomaly_reasons.append("Sensor channels require dual-point calibration")
 
-        # --------------------------------------------------------------------
-        # 4. LOAD CELL & HX711 SENSING
-        # --------------------------------------------------------------------
-        # Mass changes slowly with sensor jitter; clamps >= 0.0g
-        weight_noise = self.rng.gauss(0.0, 0.4)
-        measured_weight_g = max(0.0, min(self.config.WEIGHT_MAX_CAPACITY_GRAMS, self.current_weight_g + weight_noise))
-
-        # Raw counts: tare offset + weight * factor
-        # Tare drift simulates gradual temperature effects
-        self.tare_drift += self.rng.gauss(0.0, 0.2)
-        weight_raw = int(self.config.HX711_TARE_OFFSET + self.tare_drift + (measured_weight_g * self.config.HX711_CALIBRATION_FACTOR))
-
-        weight_g: Optional[float] = round(measured_weight_g, 1)
-        weight_ok: bool = True
-
-        if self.injected_fault == "HX711_TIMEOUT":
-            weight_g = None
-            weight_raw = 0
-            weight_ok = False
-            fault_list.append("HX711_TIMEOUT")
-            is_synthetic_anomaly = True
-            anomaly_reasons.append("HX711 load cell timeout: no serial data received from ADC")
-        elif self.injected_fault == "STUCK_VALUES":
-            if self.stuck_weight_raw is None:
-                self.stuck_weight_raw = weight_raw
-            weight_raw = self.stuck_weight_raw
-            weight_g = round((weight_raw - self.config.HX711_TARE_OFFSET) / self.config.HX711_CALIBRATION_FACTOR, 1)
-            is_synthetic_anomaly = True
-            anomaly_reasons.append("Stuck load cell reading: identical raw count output over extended window")
-        elif self.injected_fault == "SUDDEN_SPIKE":
-            # Unphysical instantaneous jump without lid opening
-            weight_raw += 850000
-            weight_g = round((weight_raw - self.config.HX711_TARE_OFFSET) / self.config.HX711_CALIBRATION_FACTOR, 1)
-            is_synthetic_anomaly = True
-            anomaly_reasons.append("Physical discontinuity: abnormal mass jump detected without proximity event")
-
-        # --------------------------------------------------------------------
-        # 5. CAPACITIVE MOISTURE SENSING
-        # --------------------------------------------------------------------
-        # Natural moisture fluctuations (evaporation or mixing)
-        moist_noise = self.rng.gauss(0.0, 0.3)
-        effective_moist_pct = max(0.0, min(100.0, self.current_moisture_pct + moist_noise))
-
-        # Capacitive Calibration formula from config.h:
-        # pct = ((airRaw - raw) / (airRaw - waterRaw)) * 100
-        # => raw = airRaw - (pct / 100.0) * (airRaw - waterRaw)
-        self.air_raw_drift += self.rng.gauss(0.0, 0.05)
-        calibrated_air_raw = self.config.MOISTURE_AIR_RAW_DEFAULT + self.air_raw_drift
-        calibrated_water_raw = self.config.MOISTURE_WATER_RAW_DEFAULT
-
-        span = calibrated_air_raw - calibrated_water_raw
-        raw_adc = calibrated_air_raw - (effective_moist_pct / 100.0) * span + self.rng.gauss(0.0, 2.5)
-        moist_raw = int(max(0, min(1023, round(raw_adc))))
-
-        moist_pct: Optional[float] = round(effective_moist_pct, 1)
-        moist_ok: bool = True
-
-        if self.injected_fault == "MOISTURE_OFFLINE":
-            # Disconnected sensor floats high (ADC > 980) or shorts to GND (ADC < 50)
-            moist_raw = 1023
-            moist_pct = None
-            moist_ok = False
-            fault_list.append("MOISTURE_OFFLINE")
-            is_synthetic_anomaly = True
-            anomaly_reasons.append("Moisture sensor disconnected: analog reading on A0 > 980 ADC")
-        elif moist_raw < self.config.MOISTURE_ADC_MIN_VALID or moist_raw > self.config.MOISTURE_ADC_MAX_VALID:
-            moist_pct = None
-            moist_ok = False
-            fault_list.append("MOISTURE_OFFLINE")
-            is_synthetic_anomaly = True
-            anomaly_reasons.append("Moisture ADC reading out of valid hardware bounds (50–980)")
-
-        # Target category heuristic based on true physical condition
-        # (Explicitly labelled as synthetic heuristic)
-        if weight_g is not None and weight_g >= 10.0 and moist_pct is not None:
-            if moist_pct >= 50.0:
+        # Target classification heuristic (Strict 2-Class Model: Biodegradable vs Non-Biodegradable)
+        synthetic_category = "UNCLASSIFIED"
+        if lc1_g is not None and lc2_g is not None:
+            if self.pending_deposit_target == "LC1" and self.interaction_state in ("AT_BIN", "DEPARTING"):
                 synthetic_category = "BIODEGRADABLE"
-            elif moist_pct <= 20.0:
+            elif self.pending_deposit_target == "LC2" and self.interaction_state in ("AT_BIN", "DEPARTING"):
                 synthetic_category = "NON_BIODEGRADABLE"
-            else:
-                synthetic_category = "UNCLASSIFIED"
-        else:
-            synthetic_category = "EMPTY"
+            elif lc1_g > lc2_g and (c1_pct or 0) > 40:
+                synthetic_category = "BIODEGRADABLE"
+            elif lc2_g >= lc1_g and (c2_pct or 0) < 30:
+                synthetic_category = "NON_BIODEGRADABLE"
 
-        # Build telemetry packet complying strictly with the protocol
+        # Telemetry record with 4 channels and backward compatibility
         record: Dict[str, Any] = {
             "v": 1,
             "dev": "SIM-WS01",
             "seq": self.seq,
             "up": self.uptime_s,
-            "moist_raw": moist_raw,
-            "moist_pct": moist_pct,
-            "moist_ok": moist_ok,
-            "moist_cal": True,
-            "weight_g": weight_g,
-            "weight_raw": weight_raw,
-            "weight_ok": weight_ok,
-            "weight_cal": True,
+            "uno_connected": uno_connected,
+            "esp32_connected": esp32_connected,
+
+            # Module A: Uno
             "dist_cm": dist_cm,
-            "prox": debounced_prox,
-            "lid_cmd": self.lid_cmd,
+            "prox": debounced_prox if uno_connected else False,
+            "lid_cmd": self.lid_cmd if uno_connected else "CLOSED",
+
+            # Module B: ESP32 4 Channels
+            "c1_raw": c1_raw,
+            "c1_pct": c1_pct,
+            "c1_ok": c1_ok,
+            "c1_cal": c1_cal,
+
+            "c2_raw": c2_raw,
+            "c2_pct": c2_pct,
+            "c2_ok": c2_ok,
+            "c2_cal": c2_cal,
+
+            "lc1_g": lc1_g,
+            "lc1_raw": lc1_raw,
+            "lc1_ok": lc1_ok,
+            "lc1_cal": lc1_cal,
+
+            "lc2_g": lc2_g,
+            "lc2_raw": lc2_raw,
+            "lc2_ok": lc2_ok,
+            "lc2_cal": lc2_cal,
+
+            # Backward compatibility aliases
+            "moist_raw": c1_raw,
+            "moist_pct": c1_pct,
+            "moist_ok": c1_ok,
+            "moist_cal": c1_cal,
+            "weight_g": lc1_g,
+            "weight_raw": lc1_raw,
+            "weight_ok": lc1_ok,
+            "weight_cal": lc1_cal,
+
             "faults": fault_list,
-            # Provenance metadata
             "source": "simulation",
             "scenario": self.scenario,
             "sim_session_id": self.session_id,
             "timestamp": self.current_time.isoformat(),
-            # Synthetic ML ground truth labels for pipeline training & validation
+
+            # Synthetic ML Ground Truth Labels
             "target_anomaly": is_synthetic_anomaly or len(fault_list) > 0,
             "anomaly_reasons": anomaly_reasons,
             "synthetic_category": synthetic_category,
         }
 
-        # Fault duration lifecycle management
+        # Fault duration management
         if self.fault_duration_ticks > 0:
             self.fault_duration_ticks -= 1
             if self.fault_duration_ticks <= 0:
                 self.injected_fault = None
-                self.stuck_moisture_raw = None
-                self.stuck_weight_raw = None
 
         return record
 
@@ -418,9 +442,8 @@ def generate_session_dataset(
     seed: Optional[int] = None,
 ) -> List[Dict[str, Any]]:
     """
-    Generates a contiguous sequence of telemetry records for a single session.
-    Computes look-ahead targets (future weights at +5m, +15m, +30m) without leaking
-    information to earlier records.
+    Generates a contiguous sequence of multi-channel telemetry records for a single session.
+    Computes look-ahead target weights for LC1 and LC2 independently without leaking future state.
     """
     generator = SyntheticTelemetryGenerator(
         session_id=session_id,
@@ -434,29 +457,24 @@ def generate_session_dataset(
     for _ in range(num_samples):
         records.append(generator.next_record())
 
-    # Calculate future weight horizons:
-    # 5 min (300s), 15 min (900s), 30 min (1800s)
     h5_steps = int(300 / sampling_interval_s)
     h15_steps = int(900 / sampling_interval_s)
     h30_steps = int(1800 / sampling_interval_s)
 
     for i in range(len(records)):
-        # Horizon +5 minutes
-        if i + h5_steps < len(records):
-            records[i]["target_weight_5m"] = records[i + h5_steps]["weight_g"]
-        else:
-            records[i]["target_weight_5m"] = records[-1]["weight_g"]
+        # LC1 Horizons
+        records[i]["target_lc1_5m"] = records[min(i + h5_steps, len(records) - 1)]["lc1_g"]
+        records[i]["target_lc1_15m"] = records[min(i + h15_steps, len(records) - 1)]["lc1_g"]
+        records[i]["target_lc1_30m"] = records[min(i + h30_steps, len(records) - 1)]["lc1_g"]
 
-        # Horizon +15 minutes
-        if i + h15_steps < len(records):
-            records[i]["target_weight_15m"] = records[i + h15_steps]["weight_g"]
-        else:
-            records[i]["target_weight_15m"] = records[-1]["weight_g"]
+        # LC2 Horizons
+        records[i]["target_lc2_5m"] = records[min(i + h5_steps, len(records) - 1)]["lc2_g"]
+        records[i]["target_lc2_15m"] = records[min(i + h15_steps, len(records) - 1)]["lc2_g"]
+        records[i]["target_lc2_30m"] = records[min(i + h30_steps, len(records) - 1)]["lc2_g"]
 
-        # Horizon +30 minutes
-        if i + h30_steps < len(records):
-            records[i]["target_weight_30m"] = records[i + h30_steps]["weight_g"]
-        else:
-            records[i]["target_weight_30m"] = records[-1]["weight_g"]
+        # Backwards compatibility target weights (mapped to LC1)
+        records[i]["target_weight_5m"] = records[i]["target_lc1_5m"]
+        records[i]["target_weight_15m"] = records[i]["target_lc1_15m"]
+        records[i]["target_weight_30m"] = records[i]["target_lc1_30m"]
 
     return records

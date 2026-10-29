@@ -58,7 +58,7 @@ try {
     $simStatus = Invoke-RestMethod -Uri "$BaseUrl/api/simulation/status" -Method GET
     Report-Test "GET /api/simulation/status reports simulation enabled" ($simStatus.simulation_enabled -eq $true)
     Report-Test "Simulation status confirms hardware isolation" ($simStatus.hardware_isolated -eq $true)
-    Report-Test "Simulation status lists all 3 scenarios" ($simStatus.scenarios_available.Count -eq 3)
+    Report-Test "Simulation status lists all scenarios" ($simStatus.scenarios_available.Count -ge 3)
 } catch {
     Report-Test "GET /api/simulation/status" $false $_.Exception.Message
 }

@@ -1,50 +1,62 @@
 {
-  "model_version": "1.0.0",
-  "training_timestamp": "2026-10-29T03:59:17.017948+00:00",
+  "model_version": "2.0.0",
+  "training_timestamp": "2026-10-29T07:14:59.910740+00:00",
   "random_seed": 42,
   "dataset_path": "data/synthetic/sensor_readings.csv",
-  "training_sample_count": 17000,
+  "training_sample_count": 16800,
   "validation_sample_count": 3600,
   "test_sample_count": 3600,
   "feature_schema": [
-    "moist_pct_imputed",
-    "moist_raw",
-    "weight_g_imputed",
-    "weight_raw",
+    "c1_pct_imputed",
+    "c1_raw",
+    "c2_pct_imputed",
+    "c2_raw",
+    "lc1_g_imputed",
+    "lc1_raw",
+    "lc2_g_imputed",
+    "lc2_raw",
     "dist_cm_imputed",
     "prox_val",
     "lid_is_open",
-    "weight_delta_1",
-    "moist_delta_1",
-    "weight_roll_mean_5",
-    "weight_roll_std_5",
-    "moist_roll_mean_5",
-    "moist_roll_std_5",
-    "moist_missing",
-    "weight_missing",
+    "lc1_delta_1",
+    "lc2_delta_1",
+    "c1_delta_1",
+    "c2_delta_1",
+    "lc1_roll_mean_5",
+    "lc1_roll_std_5",
+    "lc2_roll_mean_5",
+    "lc2_roll_std_5",
+    "c1_roll_mean_5",
+    "c1_roll_std_5",
+    "c2_roll_mean_5",
+    "c2_roll_std_5",
+    "c1_missing",
+    "c2_missing",
+    "lc1_missing",
+    "lc2_missing",
     "dist_missing",
-    "moist_ok_val",
-    "weight_ok_val",
+    "uno_connected",
+    "esp32_connected",
     "fault_count"
   ],
   "models": {
     "anomaly_detector": {
       "algorithm": "IsolationForest",
       "artifact": "anomaly_detector.joblib",
-      "calibrated_threshold": 0.56,
+      "calibrated_threshold": 0.5,
       "metrics_on_test": {
-        "precision": 0.652,
-        "recall": 0.6018,
-        "f1_score": 0.6259,
-        "calibrated_threshold": 0.56,
+        "precision": 0.0,
+        "recall": 0.0,
+        "f1_score": 0.0,
+        "calibrated_threshold": 0.5,
         "total_test_samples": 3600,
-        "true_anomalies": 442,
-        "predicted_anomalies": 408,
-        "evaluation_provenance": "SYNTHETIC SENSOR TEST \u2014 NOT REAL-WORLD VALIDATION"
+        "true_anomalies": 0,
+        "predicted_anomalies": 283,
+        "evaluation_provenance": "SYNTHETIC MODEL TEST \u2014 NOT REAL-WORLD VALIDATION"
       }
     },
     "weight_forecaster": {
-      "algorithm": "RandomForestRegressor",
+      "algorithm": "RandomForestRegressor (Dual Channel LC1 & LC2)",
       "artifact": "weight_forecaster.joblib",
       "horizons": [
         "5m",
@@ -52,44 +64,104 @@
         "30m"
       ],
       "metrics_on_test": {
+        "lc1": {
+          "5m": {
+            "model_mae_grams": 306.83,
+            "model_rmse_grams": 473.29,
+            "baseline_mae_grams": 513.46,
+            "baseline_rmse_grams": 697.83,
+            "mae_improvement_grams": 206.63,
+            "beats_baseline": true,
+            "test_samples": 3600
+          },
+          "15m": {
+            "model_mae_grams": 817.71,
+            "model_rmse_grams": 1183.29,
+            "baseline_mae_grams": 1161.38,
+            "baseline_rmse_grams": 1639.02,
+            "mae_improvement_grams": 343.67,
+            "beats_baseline": true,
+            "test_samples": 3600
+          },
+          "30m": {
+            "model_mae_grams": 2639.74,
+            "model_rmse_grams": 3308.18,
+            "baseline_mae_grams": 1244.22,
+            "baseline_rmse_grams": 1790.47,
+            "mae_improvement_grams": -1395.53,
+            "beats_baseline": false,
+            "test_samples": 3600
+          }
+        },
+        "lc2": {
+          "5m": {
+            "model_mae_grams": 303.78,
+            "model_rmse_grams": 441.95,
+            "baseline_mae_grams": 732.94,
+            "baseline_rmse_grams": 934.51,
+            "mae_improvement_grams": 429.16,
+            "beats_baseline": true,
+            "test_samples": 3600
+          },
+          "15m": {
+            "model_mae_grams": 1149.96,
+            "model_rmse_grams": 1549.14,
+            "baseline_mae_grams": 1521.23,
+            "baseline_rmse_grams": 2084.54,
+            "mae_improvement_grams": 371.27,
+            "beats_baseline": true,
+            "test_samples": 3600
+          },
+          "30m": {
+            "model_mae_grams": 2094.06,
+            "model_rmse_grams": 2357.38,
+            "baseline_mae_grams": 1621.41,
+            "baseline_rmse_grams": 2254.4,
+            "mae_improvement_grams": -472.64,
+            "beats_baseline": false,
+            "test_samples": 3600
+          }
+        },
         "5m": {
-          "horizon_seconds": 300,
-          "model_mae_grams": 808.71,
-          "model_rmse_grams": 1110.11,
-          "baseline_persistence_mae_grams": 1069.67,
-          "baseline_persistence_rmse_grams": 1288.54,
-          "mae_improvement_grams": 260.97,
+          "model_mae_grams": 306.83,
+          "model_rmse_grams": 473.29,
+          "baseline_mae_grams": 513.46,
+          "baseline_rmse_grams": 697.83,
+          "mae_improvement_grams": 206.63,
           "beats_baseline": true,
-          "test_samples": 3535
+          "test_samples": 3600
         },
         "15m": {
-          "horizon_seconds": 900,
-          "model_mae_grams": 1193.09,
-          "model_rmse_grams": 1707.45,
-          "baseline_persistence_mae_grams": 1219.1,
-          "baseline_persistence_rmse_grams": 1460.21,
-          "mae_improvement_grams": 26.01,
+          "model_mae_grams": 817.71,
+          "model_rmse_grams": 1183.29,
+          "baseline_mae_grams": 1161.38,
+          "baseline_rmse_grams": 1639.02,
+          "mae_improvement_grams": 343.67,
           "beats_baseline": true,
-          "test_samples": 3581
+          "test_samples": 3600
         },
         "30m": {
-          "horizon_seconds": 1800,
-          "model_mae_grams": 2237.44,
-          "model_rmse_grams": 3314.98,
-          "baseline_persistence_mae_grams": 1327.5,
-          "baseline_persistence_rmse_grams": 1559.27,
-          "mae_improvement_grams": -909.93,
+          "model_mae_grams": 2639.74,
+          "model_rmse_grams": 3308.18,
+          "baseline_mae_grams": 1244.22,
+          "baseline_rmse_grams": 1790.47,
+          "mae_improvement_grams": -1395.53,
           "beats_baseline": false,
           "test_samples": 3600
         }
       }
     },
     "category_classifier": {
-      "algorithm": "RandomForestClassifier",
+      "algorithm": "RandomForestClassifier (Strict 2-Class)",
       "artifact": "category_classifier.joblib",
+      "categories": [
+        "BIODEGRADABLE",
+        "NON_BIODEGRADABLE"
+      ],
       "is_experimental": true,
       "disclaimer": "SYNTHETIC PROFILE INFERENCE \u2014 NOT REAL-WORLD MATERIAL VERIFICATION"
     }
   },
+  "compartment_c_status": "RESERVED_FUTURE_USE \u2014 Explicitly excluded from classifier labels",
   "provenance_statement": "SYNTHETIC MODEL TEST \u2014 NOT REAL-WORLD VALIDATION"
 }

@@ -1,6 +1,6 @@
 """
 Intelligent Waste Segregation Analytics — Reproducible Synthetic Dataset Generator
-Generates >= 20,000 multi-scenario, temporally coherent IoT sensor records.
+Generates >= 24,000 multi-scenario, temporally coherent IoT sensor records across 4 channels (C1, C2, LC1, LC2).
 Enforces session-based partitioning to prevent data leakage between train, validation, and test sets.
 """
 
@@ -11,7 +11,7 @@ import argparse
 from datetime import datetime, timezone, timedelta
 from typing import List, Dict, Any
 
-# Ensure parent directory is in sys.path for direct script execution
+# Ensure parent directory is in sys.path
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import pandas as pd
@@ -25,30 +25,28 @@ def generate_full_dataset(
     sampling_interval_s: float = 1.0,
 ) -> Dict[str, Any]:
     """
-    Generates a multi-session, multi-scenario synthetic dataset.
+    Generates a multi-session, multi-scenario synthetic dataset for the 4-channel system.
     Splits sessions chronologically into train (70%), validation (15%), and test (15%).
     """
     os.makedirs(output_dir, exist_ok=True)
 
-    # Scenarios and session definitions
-    # Total samples: ~24,000 records (~6.6 hours of continuous 1Hz telemetry)
     scenarios_plan = [
         # Training Sessions (70% ~ 16,800 records)
-        {"session_id": "SES-TRAIN-01", "scenario": "NORMAL_OPERATION", "records": 4000, "split": "train"},
-        {"session_id": "SES-TRAIN-02", "scenario": "WASTE_ACCUMULATION", "records": 4000, "split": "train"},
-        {"session_id": "SES-TRAIN-03", "scenario": "WET_WASTE_PROFILE", "records": 3000, "split": "train"},
-        {"session_id": "SES-TRAIN-04", "scenario": "DRY_WASTE_PROFILE", "records": 3000, "split": "train"},
-        {"session_id": "SES-TRAIN-05", "scenario": "HIGH_USAGE", "records": 2000, "split": "train"},
-        {"session_id": "SES-TRAIN-06", "scenario": "SENSOR_FAULTS", "records": 1000, "split": "train"},
+        {"session_id": "SES-TRAIN-01", "scenario": "NORMAL_OPERATION", "records": 3500, "split": "train"},
+        {"session_id": "SES-TRAIN-02", "scenario": "BIN1_ACCUMULATION", "records": 3500, "split": "train"},
+        {"session_id": "SES-TRAIN-03", "scenario": "BIN2_ACCUMULATION", "records": 3500, "split": "train"},
+        {"session_id": "SES-TRAIN-04", "scenario": "UNO_DISCONNECTED", "records": 2300, "split": "train"},
+        {"session_id": "SES-TRAIN-05", "scenario": "ESP32_DISCONNECTED", "records": 2000, "split": "train"},
+        {"session_id": "SES-TRAIN-06", "scenario": "SENSOR_FAULTS", "records": 2000, "split": "train"},
 
         # Validation Sessions (15% ~ 3,600 records)
         {"session_id": "SES-VAL-01", "scenario": "NORMAL_OPERATION", "records": 1200, "split": "val"},
-        {"session_id": "SES-VAL-02", "scenario": "WASTE_ACCUMULATION", "records": 1200, "split": "val"},
+        {"session_id": "SES-VAL-02", "scenario": "BIN1_ACCUMULATION", "records": 1200, "split": "val"},
         {"session_id": "SES-VAL-03", "scenario": "SENSOR_FAULTS", "records": 1200, "split": "val"},
 
         # Test Sessions (15% ~ 3,600 records)
         {"session_id": "SES-TEST-01", "scenario": "NORMAL_OPERATION", "records": 1200, "split": "test"},
-        {"session_id": "SES-TEST-02", "scenario": "WASTE_ACCUMULATION", "records": 1200, "split": "test"},
+        {"session_id": "SES-TEST-02", "scenario": "BIN2_ACCUMULATION", "records": 1200, "split": "test"},
         {"session_id": "SES-TEST-03", "scenario": "SENSOR_FAULTS", "records": 1200, "split": "test"},
     ]
 
@@ -58,7 +56,7 @@ def generate_full_dataset(
     split_counts: Dict[str, int] = {"train": 0, "val": 0, "test": 0}
     session_offset_s = 0
 
-    print(f"[DATASET] Generating synthetic telemetry dataset (seed={seed}, target >={total_target_records})...")
+    print(f"[DATASET] Generating 4-channel synthetic dataset (seed={seed}, target >={total_target_records})...")
 
     for idx, plan in enumerate(scenarios_plan):
         session_seed = seed + idx * 101
@@ -102,14 +100,13 @@ def generate_full_dataset(
     df = pd.DataFrame(csv_records)
     df.to_csv(csv_path, index=False)
 
-    # Calculate statistics for metadata
     faulty_records = sum(1 for r in all_records if r.get("target_anomaly", False))
     fault_rate = round((faulty_records / len(all_records)) * 100, 2)
 
     metadata: Dict[str, Any] = {
-        "dataset_name": "Intelligent Waste Segregation Synthetic Sensor Telemetry",
-        "dataset_version": "1.0.0",
-        "generator_version": "1.0.0",
+        "dataset_name": "Intelligent Waste Segregation 4-Channel Multi-MCU Synthetic Telemetry",
+        "dataset_version": "2.0.0",
+        "generator_version": "2.0.0",
         "created_at": datetime.now(timezone.utc).isoformat(),
         "random_seed": seed,
         "sampling_interval_s": sampling_interval_s,
@@ -121,40 +118,48 @@ def generate_full_dataset(
             "anomaly_rate_percent": fault_rate,
         },
         "sensor_specifications": {
-            "moisture": {
-                "type": "Capacitive Soil Moisture Analog A0",
-                "raw_adc_bounds": [0, 1023],
+            "c1_moisture": {
+                "role": "Compartment A (Biodegradable Waste)",
+                "type": "Capacitive Soil Moisture Analog GPIO 34 (ADC1)",
+                "raw_adc_bounds": [0, 4095],
                 "valid_adc_bounds": [SyntheticSensorConfig.MOISTURE_ADC_MIN_VALID, SyntheticSensorConfig.MOISTURE_ADC_MAX_VALID],
-                "air_raw_default": SyntheticSensorConfig.MOISTURE_AIR_RAW_DEFAULT,
-                "water_raw_default": SyntheticSensorConfig.MOISTURE_WATER_RAW_DEFAULT,
-                "units": "Percent (%) and Raw 10-bit ADC",
-                "calibration_formula": "pct = ((airRaw - raw) / (airRaw - waterRaw)) * 100",
-                "hardware_note": "Lower raw ADC indicates higher moisture content"
+                "units": "Percent (%) and Raw 12-bit ADC"
             },
-            "weight": {
-                "type": "Load Cell + HX711 Amplifier D2/D3",
-                "tare_offset": SyntheticSensorConfig.HX711_TARE_OFFSET,
-                "calibration_factor": SyntheticSensorConfig.HX711_CALIBRATION_FACTOR,
+            "c2_moisture": {
+                "role": "Compartment B (Non-Biodegradable Waste)",
+                "type": "Capacitive Soil Moisture Analog GPIO 35 (ADC1)",
+                "raw_adc_bounds": [0, 4095],
+                "valid_adc_bounds": [SyntheticSensorConfig.MOISTURE_ADC_MIN_VALID, SyntheticSensorConfig.MOISTURE_ADC_MAX_VALID],
+                "units": "Percent (%) and Raw 12-bit ADC"
+            },
+            "lc1_weight": {
+                "role": "Compartment A Mass (Biodegradable)",
+                "type": "Load Cell 1 + HX711 (DOUT 16, SCK 4)",
+                "max_capacity_g": SyntheticSensorConfig.WEIGHT_MAX_CAPACITY_GRAMS,
+                "units": "Grams (g) and Raw Counts"
+            },
+            "lc2_weight": {
+                "role": "Compartment B Mass (Non-Biodegradable)",
+                "type": "Load Cell 2 + HX711 (DOUT 17, SCK 18)",
                 "max_capacity_g": SyntheticSensorConfig.WEIGHT_MAX_CAPACITY_GRAMS,
                 "units": "Grams (g) and Raw Counts"
             },
             "ultrasonic": {
-                "type": "HC-SR04 Ultrasonic Distance D4/D5",
+                "role": "Module A (Arduino Uno): Proximity Detection",
+                "type": "HC-SR04 (TRIG D4, ECHO D5)",
                 "proximity_threshold_cm": SyntheticSensorConfig.PROXIMITY_THRESHOLD_CM,
-                "debounce_count": SyntheticSensorConfig.PROXIMITY_DEBOUNCE_COUNT,
-                "valid_distance_bounds_cm": [SyntheticSensorConfig.ULTRASONIC_MIN_VALID_CM, SyntheticSensorConfig.ULTRASONIC_MAX_VALID_CM],
                 "units": "Centimetres (cm)"
             },
             "lid_servo": {
+                "role": "Module A (Arduino Uno): Autonomous Lid Actuator",
                 "type": "Servo Actuator D6",
-                "hold_open_duration_s": SyntheticSensorConfig.LID_HOLD_DURATION_S,
-                "cooldown_duration_s": SyntheticSensorConfig.LID_COOLDOWN_DURATION_S,
                 "states": ["CLOSED", "OPEN"]
             }
         },
+        "compartment_c_status": "RESERVED_FUTURE_USE — No synthetic readings generated",
         "missing_value_handling": "Missing, uncalibrated, or timed-out sensors emit null (None) in JSON and NaN in CSV",
         "data_leakage_prevention": "Strict session-based partitioning; train, validation, and test sets contain disjoint sessions separated chronologically",
-        "provenance_statement": "SYNTHETIC MODEL TEST — NOT REAL-WORLD HARDWARE VALIDATION"
+        "provenance_statement": "SYNTHETIC MODEL TEST — NOT REAL-WORLD VALIDATION"
     }
 
     metadata_path = os.path.join(output_dir, "dataset_metadata.json")

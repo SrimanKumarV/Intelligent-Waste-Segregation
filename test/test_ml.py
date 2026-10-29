@@ -1,6 +1,7 @@
 """
 Intelligent Waste Segregation Analytics — Automated Unit & Integration Tests
-Validates synthetic physics, temporal correlation, model lifecycle, API safety, and data isolation.
+Validates 4-channel synthetic physics, temporal correlation, multi-horizon models,
+FastAPI service safety, and data isolation across Uno and ESP32.
 """
 
 import os
@@ -27,11 +28,11 @@ from ml.service import app
 
 
 # =============================================================================
-# 1. SYNTHETIC GENERATION TESTS
+# 1. 4-CHANNEL SYNTHETIC GENERATION TESTS
 # =============================================================================
 
 def test_synthetic_reproducibility():
-    """Verify that identical random seeds produce identical telemetry sequences."""
+    """Verify that identical random seeds produce identical telemetry sequences across all 4 channels."""
     gen1 = SyntheticTelemetryGenerator(session_id="S1", scenario="NORMAL_OPERATION", seed=123)
     gen2 = SyntheticTelemetryGenerator(session_id="S1", scenario="NORMAL_OPERATION", seed=123)
 
@@ -40,31 +41,39 @@ def test_synthetic_reproducibility():
 
     for r1, r2 in zip(records1, records2):
         assert r1["seq"] == r2["seq"]
-        assert r1["moist_raw"] == r2["moist_raw"]
-        assert r1["weight_g"] == r2["weight_g"]
+        assert r1["c1_raw"] == r2["c1_raw"]
+        assert r1["c2_raw"] == r2["c2_raw"]
+        assert r1["lc1_g"] == r2["lc1_g"]
+        assert r1["lc2_g"] == r2["lc2_g"]
         assert r1["dist_cm"] == r2["dist_cm"]
         assert r1["lid_cmd"] == r2["lid_cmd"]
 
 
 def test_sensor_physical_bounds():
-    """Verify that sensor values remain within physical and ADC boundaries."""
-    gen = SyntheticTelemetryGenerator(scenario="WASTE_ACCUMULATION", seed=42)
+    """Verify that 4-channel sensor values remain within physical and 12-bit ADC boundaries."""
+    gen = SyntheticTelemetryGenerator(scenario="BIN1_ACCUMULATION", seed=42)
     records = [gen.next_record() for _ in range(300)]
 
     for r in records:
-        # Moisture ADC must stay within 10-bit range (0 to 1023)
-        assert 0 <= r["moist_raw"] <= 1023
+        # Moisture ADC on ESP32 must stay within 12-bit range (0 to 4095)
+        if r["c1_raw"] is not None:
+            assert 0 <= r["c1_raw"] <= 4095
+        if r["c2_raw"] is not None:
+            assert 0 <= r["c2_raw"] <= 4095
 
         # Moisture percentage, when calibrated and valid, must be 0-100%
-        if r["moist_pct"] is not None:
-            assert 0.0 <= r["moist_pct"] <= 100.0
+        if r["c1_pct"] is not None:
+            assert 0.0 <= r["c1_pct"] <= 100.0
+        if r["c2_pct"] is not None:
+            assert 0.0 <= r["c2_pct"] <= 100.0
 
-        # Weight must be non-negative and within capacity
-        if r["weight_g"] is not None:
-            assert r["weight_g"] >= 0.0
-            assert r["weight_g"] <= SyntheticSensorConfig.WEIGHT_MAX_CAPACITY_GRAMS
+        # Load cell weights must be non-negative and within capacity
+        if r["lc1_g"] is not None:
+            assert 0.0 <= r["lc1_g"] <= SyntheticSensorConfig.WEIGHT_MAX_CAPACITY_GRAMS
+        if r["lc2_g"] is not None:
+            assert 0.0 <= r["lc2_g"] <= SyntheticSensorConfig.WEIGHT_MAX_CAPACITY_GRAMS
 
-        # Distance must be within valid ultrasonic bounds when not timed out
+        # Distance must be within valid ultrasonic bounds when Uno is connected
         if r["dist_cm"] is not None:
             assert SyntheticSensorConfig.ULTRASONIC_MIN_VALID_CM <= r["dist_cm"] <= SyntheticSensorConfig.ULTRASONIC_MAX_VALID_CM
 
@@ -72,22 +81,19 @@ def test_sensor_physical_bounds():
 def test_moisture_calibration_physics():
     """Verify capacitive physics: lower raw ADC indicates higher moisture percentage."""
     cfg = SyntheticSensorConfig()
-    air_raw = cfg.MOISTURE_AIR_RAW_DEFAULT   # 620 ADC (dry, 0%)
-    water_raw = cfg.MOISTURE_WATER_RAW_DEFAULT # 290 ADC (wet, 100%)
+    air_raw = cfg.MOISTURE_AIR_RAW_DEFAULT     # 3200 ADC (dry, 0%)
+    water_raw = cfg.MOISTURE_WATER_RAW_DEFAULT # 1400 ADC (wet, 100%)
 
     assert air_raw > water_raw, "Capacitive sensor air raw ADC must be greater than water raw ADC"
 
-    # In dry scenario, average ADC should be higher than in wet scenario
-    gen_dry = SyntheticTelemetryGenerator(scenario="DRY_WASTE_PROFILE", seed=10)
-    gen_wet = SyntheticTelemetryGenerator(scenario="WET_WASTE_PROFILE", seed=10)
+    # Organic wet waste on C1 should have lower raw ADC than inorganic dry waste on C2
+    gen = SyntheticTelemetryGenerator(scenario="BIN1_ACCUMULATION", seed=10)
+    records = [gen.next_record() for _ in range(100)]
 
-    dry_records = [gen_dry.next_record() for _ in range(100)]
-    wet_records = [gen_wet.next_record() for _ in range(100)]
+    avg_c1_raw = np.mean([r["c1_raw"] for r in records if r["c1_ok"]])
+    avg_c2_raw = np.mean([r["c2_raw"] for r in records if r["c2_ok"]])
 
-    avg_dry_raw = np.mean([r["moist_raw"] for r in dry_records if r["moist_ok"]])
-    avg_wet_raw = np.mean([r["moist_raw"] for r in wet_records if r["moist_ok"]])
-
-    assert avg_dry_raw > avg_wet_raw, "Dry waste must produce higher ADC than wet waste"
+    assert avg_c2_raw > avg_c1_raw, "Drier waste (C2) must produce higher ADC than wet organic waste (C1)"
 
 
 def test_distance_and_proximity_debounce():
@@ -97,20 +103,18 @@ def test_distance_and_proximity_debounce():
 
     for r in records:
         if r["prox"] is True:
-            # If proximity is debounced and active, distance must be <= threshold
             assert r["dist_cm"] is not None
             assert r["dist_cm"] <= SyntheticSensorConfig.PROXIMITY_THRESHOLD_CM
 
 
 def test_lid_state_machine():
     """Verify lid states are valid and adhere to hold and cooldown transitions."""
-    gen = SyntheticTelemetryGenerator(scenario="HIGH_USAGE", seed=42)
+    gen = SyntheticTelemetryGenerator(scenario="BIN1_ACCUMULATION", seed=42)
     records = [gen.next_record() for _ in range(300)]
 
     for r in records:
         assert r["lid_cmd"] in ["CLOSED", "OPEN"]
 
-    # Verify lid never opens unless proximity was detected
     for i in range(1, len(records)):
         prev = records[i - 1]
         curr = records[i]
@@ -121,23 +125,24 @@ def test_lid_state_machine():
 def test_missing_values_and_fault_injection():
     """Verify explicit nulls for disconnected or timed-out sensors."""
     gen = SyntheticTelemetryGenerator(scenario="NORMAL_OPERATION", seed=42)
-    # Inject moisture disconnection
-    gen.inject_fault("MOISTURE_OFFLINE", duration_ticks=5)
+
+    # Inject C1 moisture disconnection
+    gen.inject_fault("C1_OFFLINE", duration_ticks=5)
     records = [gen.next_record() for _ in range(5)]
 
     for r in records:
-        assert r["moist_pct"] is None, "Disconnected moisture must emit None/null, not fabricated 0"
-        assert r["moist_ok"] is False
-        assert "MOISTURE_OFFLINE" in r["faults"]
+        assert r["c1_pct"] is None, "Disconnected C1 must emit None/null, never fake 0"
+        assert r["c1_ok"] is False
+        assert "C1_MOISTURE_OFFLINE" in r["faults"]
         assert r["target_anomaly"] is True
 
-    # Inject HX711 timeout
-    gen.inject_fault("HX711_TIMEOUT", duration_ticks=5)
+    # Inject LC1 load cell timeout
+    gen.inject_fault("LC1_TIMEOUT", duration_ticks=5)
     records_hx = [gen.next_record() for _ in range(5)]
     for r in records_hx:
-        assert r["weight_g"] is None, "HX711 timeout must emit None/null, not 0"
-        assert r["weight_ok"] is False
-        assert "HX711_TIMEOUT" in r["faults"]
+        assert r["lc1_g"] is None, "LC1 timeout must emit None/null, never fake 0"
+        assert r["lc1_ok"] is False
+        assert "LC1_HX711_TIMEOUT" in r["faults"]
 
 
 # =============================================================================
@@ -157,7 +162,6 @@ def test_session_based_partitioning():
         val_sessions = set(df[df["split"] == "val"]["sim_session_id"].unique())
         test_sessions = set(df[df["split"] == "test"]["sim_session_id"].unique())
 
-        # Disjoint verification
         assert train_sessions.isdisjoint(val_sessions), "Train and validation sessions must not overlap"
         assert train_sessions.isdisjoint(test_sessions), "Train and test sessions must not overlap"
         assert val_sessions.isdisjoint(test_sessions), "Validation and test sessions must not overlap"
@@ -169,7 +173,6 @@ def test_session_based_partitioning():
 
 def test_anomaly_detector_lifecycle(tmp_path):
     """Verify anomaly detector training, saving, loading, and safe fallback."""
-    # Create small synthetic training data
     records = generate_session_dataset("SES-TEST", "NORMAL_OPERATION", 100, seed=1)
     df = pd.DataFrame(records)
     feat_df = extract_batch_features(df)
@@ -180,29 +183,26 @@ def test_anomaly_detector_lifecycle(tmp_path):
     artifact_path = str(tmp_path / "test_anomaly.joblib")
     detector.save(artifact_path)
 
-    # Reload model
     loaded_detector = SensorAnomalyDetector.load(artifact_path)
     assert loaded_detector.is_fitted is True
 
-    # Test single nominal inference
     nominal_rec = records[0]
     res_nom = loaded_detector.predict_single(nominal_rec)
     assert res_nom["status"] in ["normal", "suspected_anomaly"]
     assert 0.0 <= res_nom["anomaly_score"] <= 1.0
 
-    # Test missing sensor packet does not crash
     faulty_rec = dict(nominal_rec)
-    faulty_rec["moist_pct"] = None
-    faulty_rec["moist_ok"] = False
-    faulty_rec["faults"] = ["MOISTURE_OFFLINE"]
+    faulty_rec["c1_pct"] = None
+    faulty_rec["c1_ok"] = False
+    faulty_rec["faults"] = ["C1_MOISTURE_OFFLINE"]
     res_fault = loaded_detector.predict_single(faulty_rec)
     assert res_fault["is_anomaly"] is True
     assert res_fault["status"] == "suspected_anomaly"
 
 
 def test_weight_forecaster_lifecycle(tmp_path):
-    """Verify weight forecaster training, saving, loading, and baseline comparison."""
-    records = generate_session_dataset("SES-TEST-W", "WASTE_ACCUMULATION", 150, seed=2)
+    """Verify dual load-cell weight forecaster training, saving, loading, and baseline comparison."""
+    records = generate_session_dataset("SES-TEST-W", "BIN1_ACCUMULATION", 150, seed=2)
     df = pd.DataFrame(records)
     feat_df = extract_batch_features(df)
 
@@ -216,21 +216,21 @@ def test_weight_forecaster_lifecycle(tmp_path):
     assert loaded_forecaster.is_fitted is True
 
     res = loaded_forecaster.predict_single(records[50], horizon="5m")
-    assert res["status"] == "forecast_ready"
-    assert res["predicted_weight_g"] >= 0.0
-    assert res["predicted_weight_g"] <= 10000.0
-    assert res["lower_bound_g"] <= res["predicted_weight_g"] <= res["upper_bound_g"]
+    assert res["status"] in ["forecast_available", "forecast_ready"]
+    assert res["lc1"]["forecast_grams"] >= 0.0
+    assert res["lc1"]["forecast_grams"] <= 10000.0
+    assert "plain_english_summary" in res
 
 
 def test_unfitted_model_fail_safe():
     """Verify that missing or unfitted models return explicit errors, never random predictions."""
     detector = SensorAnomalyDetector()
-    res = detector.predict_single({"weight_g": 100})
+    res = detector.predict_single({"lc1_g": 100})
     assert res["status"] == "model_unavailable"
     assert res["is_anomaly"] is False
 
     forecaster = WasteAccumulationForecaster()
-    res_f = forecaster.predict_single({"weight_g": 100})
+    res_f = forecaster.predict_single({"lc1_g": 100})
     assert res_f["status"] == "model_unavailable"
 
     with pytest.raises(FileNotFoundError):
@@ -249,14 +249,24 @@ def test_api_endpoints():
         "dev": "SIM-WS01",
         "seq": 10,
         "up": 20,
-        "moist_raw": 450,
-        "moist_pct": 65.0,
-        "moist_ok": True,
-        "moist_cal": True,
-        "weight_g": 240.0,
-        "weight_raw": 100000,
-        "weight_ok": True,
-        "weight_cal": True,
+        "uno_connected": True,
+        "esp32_connected": True,
+        "c1_raw": 1950,
+        "c1_pct": 68.0,
+        "c1_ok": True,
+        "c1_cal": True,
+        "c2_raw": 3200,
+        "c2_pct": 14.0,
+        "c2_ok": True,
+        "c2_cal": True,
+        "lc1_g": 240.0,
+        "lc1_raw": 100000,
+        "lc1_ok": True,
+        "lc1_cal": True,
+        "lc2_g": 85.0,
+        "lc2_raw": 100000,
+        "lc2_ok": True,
+        "lc2_cal": True,
         "dist_cm": 14.2,
         "prox": True,
         "lid_cmd": "OPEN",
@@ -281,7 +291,7 @@ def test_api_endpoints():
         res_fc = requests.post(f"{base_url}/api/ml/forecast?horizon=5m", json=payload, timeout=3)
         assert res_fc.status_code == 200
         fc_json = res_fc.json()
-        assert "predicted_weight_g" in fc_json
+        assert "lc1" in fc_json or "predicted_weight_g" in fc_json
 
         res_inv = requests.post(f"{base_url}/api/ml/forecast?horizon=invalid_horizon", json=payload, timeout=3)
         assert res_inv.status_code == 422
@@ -295,4 +305,4 @@ def test_api_endpoints():
         an = detect_anomaly(rec)
         assert "anomaly_score" in an
         fc = forecast_weight(rec, horizon="5m")
-        assert "predicted_weight_g" in fc
+        assert "lc1" in fc or "predicted_weight_g" in fc

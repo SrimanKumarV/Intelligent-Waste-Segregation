@@ -105,4 +105,14 @@
 #define PROXIMITY_CHECK_INTERVAL_MS 100     // Ultrasonic poll rate (10Hz)
 #define HEARTBEAT_BLINK_INTERVAL_MS 500     // LED toggle rate
 
+// ============================================================================
+// MODULAR LCD DISPLAY CONFIGURATION (MODULE A: ARDUINO UNO)
+// ============================================================================
+// I2C LCD Backpack (PCF8574 default) on Arduino Uno standard I2C: A4 (SDA), A5 (SCL)
+#define LCD_UNO_ENABLED             1       // 1 = enabled, 0 = disabled
+#define LCD_UNO_I2C_ADDR            0x27    // Standard I2C backpack address (or 0x3F)
+#define LCD_UNO_COLS                16      // 16 characters wide
+#define LCD_UNO_ROWS                2       // 2 rows
+#define LCD_UNO_REFRESH_INTERVAL_MS 500     // 500ms non-blocking refresh rate
+
 #endif // CONFIG_H

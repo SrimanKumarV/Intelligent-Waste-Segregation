@@ -1,73 +1,84 @@
 {
-  "dataset_name": "Intelligent Waste Segregation Synthetic Sensor Telemetry",
-  "dataset_version": "1.0.0",
-  "generator_version": "1.0.0",
-  "created_at": "2026-10-29T03:52:58.430842+00:00",
+  "dataset_name": "Intelligent Waste Segregation 4-Channel Multi-MCU Synthetic Telemetry",
+  "dataset_version": "2.0.0",
+  "generator_version": "2.0.0",
+  "created_at": "2026-10-29T07:09:10.111434+00:00",
   "random_seed": 42,
   "sampling_interval_s": 1.0,
-  "total_records": 24200,
+  "total_records": 24000,
   "split_counts": {
-    "train": 17000,
+    "train": 16800,
     "val": 3600,
     "test": 3600
   },
   "scenario_distribution": {
-    "NORMAL_OPERATION": 6400,
-    "WASTE_ACCUMULATION": 6400,
-    "WET_WASTE_PROFILE": 3000,
-    "DRY_WASTE_PROFILE": 3000,
-    "HIGH_USAGE": 2000,
-    "SENSOR_FAULTS": 3400
+    "NORMAL_OPERATION": 5900,
+    "BIN1_ACCUMULATION": 4700,
+    "BIN2_ACCUMULATION": 4700,
+    "UNO_DISCONNECTED": 2300,
+    "ESP32_DISCONNECTED": 2000,
+    "SENSOR_FAULTS": 4400
   },
   "fault_statistics": {
-    "total_anomalous_records": 1240,
-    "anomaly_rate_percent": 5.12
+    "total_anomalous_records": 4300,
+    "anomaly_rate_percent": 17.92
   },
   "sensor_specifications": {
-    "moisture": {
-      "type": "Capacitive Soil Moisture Analog A0",
+    "c1_moisture": {
+      "role": "Compartment A (Biodegradable Waste)",
+      "type": "Capacitive Soil Moisture Analog GPIO 34 (ADC1)",
       "raw_adc_bounds": [
         0,
-        1023
+        4095
       ],
       "valid_adc_bounds": [
-        50,
-        980
+        200,
+        3950
       ],
-      "air_raw_default": 620,
-      "water_raw_default": 290,
-      "units": "Percent (%) and Raw 10-bit ADC",
-      "calibration_formula": "pct = ((airRaw - raw) / (airRaw - waterRaw)) * 100",
-      "hardware_note": "Lower raw ADC indicates higher moisture content"
+      "units": "Percent (%) and Raw 12-bit ADC"
     },
-    "weight": {
-      "type": "Load Cell + HX711 Amplifier D2/D3",
-      "tare_offset": 100000,
-      "calibration_factor": 420.0,
+    "c2_moisture": {
+      "role": "Compartment B (Non-Biodegradable Waste)",
+      "type": "Capacitive Soil Moisture Analog GPIO 35 (ADC1)",
+      "raw_adc_bounds": [
+        0,
+        4095
+      ],
+      "valid_adc_bounds": [
+        200,
+        3950
+      ],
+      "units": "Percent (%) and Raw 12-bit ADC"
+    },
+    "lc1_weight": {
+      "role": "Compartment A Mass (Biodegradable)",
+      "type": "Load Cell 1 + HX711 (DOUT 16, SCK 4)",
+      "max_capacity_g": 10000.0,
+      "units": "Grams (g) and Raw Counts"
+    },
+    "lc2_weight": {
+      "role": "Compartment B Mass (Non-Biodegradable)",
+      "type": "Load Cell 2 + HX711 (DOUT 17, SCK 18)",
       "max_capacity_g": 10000.0,
       "units": "Grams (g) and Raw Counts"
     },
     "ultrasonic": {
-      "type": "HC-SR04 Ultrasonic Distance D4/D5",
+      "role": "Module A (Arduino Uno): Proximity Detection",
+      "type": "HC-SR04 (TRIG D4, ECHO D5)",
       "proximity_threshold_cm": 20.0,
-      "debounce_count": 2,
-      "valid_distance_bounds_cm": [
-        2.0,
-        200.0
-      ],
       "units": "Centimetres (cm)"
     },
     "lid_servo": {
+      "role": "Module A (Arduino Uno): Autonomous Lid Actuator",
       "type": "Servo Actuator D6",
-      "hold_open_duration_s": 4.0,
-      "cooldown_duration_s": 1.5,
       "states": [
         "CLOSED",
         "OPEN"
       ]
     }
   },
+  "compartment_c_status": "RESERVED_FUTURE_USE \u2014 No synthetic readings generated",
   "missing_value_handling": "Missing, uncalibrated, or timed-out sensors emit null (None) in JSON and NaN in CSV",
   "data_leakage_prevention": "Strict session-based partitioning; train, validation, and test sets contain disjoint sessions separated chronologically",
-  "provenance_statement": "SYNTHETIC MODEL TEST \u2014 NOT REAL-WORLD HARDWARE VALIDATION"
+  "provenance_statement": "SYNTHETIC MODEL TEST \u2014 NOT REAL-WORLD VALIDATION"
 }

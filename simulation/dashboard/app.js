@@ -1,8 +1,14 @@
 /**
  * Intelligent Solid Waste Segregation Analytics — IoT Operational Dashboard
- * Dual-Mode Monitoring:
- *  1. Live Hardware Mode — receives actual physical telemetry from Arduino Uno R3.
- *  2. Simulation Mode    — deterministic synthetic telemetry engine when hardware is offline.
+ * Multi-Microcontroller Architecture (Arduino Uno & ESP32)
+ *
+ * Two-Page Modular Experience:
+ *   Page 1: Overview Dashboard — Clean, high-level environmental metrics & alerts
+ *   Page 2: Technical Operations — Detailed diagnostics, 4-channel telemetry & calibration
+ *
+ * Dual Mode Monitoring:
+ *   - Live Hardware Mode: Genuine multi-device telemetry from Uno & ESP32
+ *   - Simulation Mode: Isolated synthetic engine (4 channels, 2 active bins, Bin 3 reserved)
  */
 
 // ============================================================================
@@ -14,27 +20,31 @@ const state = {
   webSerialPort: null,
   isSerialConnected: false,
 
+  // Active View Tab: 'overview' | 'operations'
+  activeTab: 'overview',
+
   // Monitoring Mode: 'hardware' | 'simulation'
   mode: 'hardware',
-  debounceTimer: null,
 
-  // Multi-Device Hardware Telemetry Tracking
+  // Device Telemetry State
   unoTelemetry: null,
   lastUnoTimestamp: 0,
   esp32Telemetry: null,
   lastEsp32Timestamp: 0,
-  latestTelemetry: null, // Composite
+  latestTelemetry: null,
   lastTelemetryTimestamp: 0,
+
   deviceHealth: {
     overall_status: 'ALL_OFFLINE',
     uno: { status: 'DISCONNECTED', connected: false },
     esp32: { status: 'DISCONNECTED', connected: false }
   },
+
+  // Telemetry History for SVG Charts
   historyData: [],
   lidEvents: [],
-  categoryStats: null,
 
-  // Simulation engine state
+  // Simulation Engine State
   simSessionId: null,
   simStartedAt: null,
   simIntervalId: null,
@@ -42,24 +52,35 @@ const state = {
   simScenario: 'SCENARIO_A',
   simIsPaused: false,
   simFaultActive: false,
-  simHistoryData: [],
-  simLidEvents: [],
+  simSeqUno: 100,
+  simSeqEsp: 100,
+  simLc1Weight: 350.0,
+  simLc2Weight: 220.0,
+  simC1Moist: 65.0,
+  simC2Moist: 18.0,
 
-  // Machine Learning Pipeline State
-  selectedHorizon: '5m',
-  lastMlInferenceTime: 0,
-  mlServiceOnline: false
+  // ML Pipeline Cache
+  mlAnomalyResult: null,
+  mlForecastResult: null,
+  mlClassifyResult: null,
+  mlServiceOnline: false,
+  lastMlInferenceTime: 0
 };
 
 // ============================================================================
-// DOM CACHE
+// DOM ELEMENTS CACHE
 // ============================================================================
 const dom = {
+  // Navigation Tabs
+  tabOverview: document.getElementById('tab-overview'),
+  tabOperations: document.getElementById('tab-operations'),
+  viewOverview: document.getElementById('view-overview'),
+  viewOperations: document.getElementById('view-operations'),
+
   // Mode Controls & Banner
   modeToggleSwitch: document.getElementById('mode-toggle-switch'),
   modeOptLive: document.getElementById('mode-opt-live'),
   modeOptSim: document.getElementById('mode-opt-sim'),
-
   modeBanner: document.getElementById('mode-banner'),
   modeBannerBadge: document.getElementById('mode-banner-badge'),
   modeBannerTitle: document.getElementById('mode-banner-title'),
@@ -79,7 +100,7 @@ const dom = {
   simFaultIcon: document.getElementById('sim-fault-icon'),
   simFaultText: document.getElementById('sim-fault-text'),
 
-  // Dual Device Status Badges
+  // Header Status Badges
   unoConnBadge: document.getElementById('uno-conn-badge'),
   unoConnText: document.getElementById('uno-conn-text'),
   espConnBadge: document.getElementById('esp-conn-badge'),
@@ -87,111 +108,161 @@ const dom = {
   btnWebSerial: document.getElementById('btn-webserial'),
   btnWebSerialText: document.getElementById('btn-webserial-text'),
 
-  // Health Metrics Strip
-  valUnoStatus: document.getElementById('val-uno-status'),
-  valEspStatus: document.getElementById('val-esp-status'),
-  valUnoLast: document.getElementById('val-uno-last'),
-  valEspLast: document.getElementById('val-esp-last'),
-  valFaultCount: document.getElementById('val-fault-count'),
+  // Overview Summary Metrics
+  valTotalWeight: document.getElementById('val-total-weight'),
+  unitTotalWeight: document.getElementById('unit-total-weight'),
+  subTotalWeight: document.getElementById('sub-total-weight'),
+  valSummaryLid: document.getElementById('val-summary-lid'),
+  subSummaryLid: document.getElementById('sub-summary-lid'),
+  valSummaryDevices: document.getElementById('val-summary-devices'),
+  subSummaryDevices: document.getElementById('sub-summary-devices'),
+  valSummaryWarnings: document.getElementById('val-summary-warnings'),
+  subSummaryWarnings: document.getElementById('sub-summary-warnings'),
+  valSummaryLastUpdate: document.getElementById('val-summary-last-update'),
+  subSummaryUpdate: document.getElementById('sub-summary-update'),
 
-  // Section titles
-  sensorSectionTitle: document.getElementById('sensor-section-title'),
-  sensorSectionSubtitle: document.getElementById('sensor-section-subtitle'),
-  chartSectionTitle: document.getElementById('chart-section-title'),
-  chartSectionSubtitle: document.getElementById('chart-section-subtitle'),
+  // Device Health Cards (Overview)
+  unoHealthPill: document.getElementById('uno-health-pill'),
+  unoStateDesc: document.getElementById('uno-state-desc'),
+  unoDistDesc: document.getElementById('uno-dist-desc'),
+  unoProxDesc: document.getElementById('uno-prox-desc'),
+  unoLidDesc: document.getElementById('uno-lid-desc'),
+  unoLastSeen: document.getElementById('uno-last-seen'),
 
-  // Moisture Card
-  moistStatusPill: document.getElementById('moist-status-pill'),
-  moistVal: document.getElementById('moist-val'),
-  moistUnit: document.getElementById('moist-unit'),
-  moistSubtext: document.getElementById('moist-subtext'),
-  moistRawAdc: document.getElementById('moist-raw-adc'),
-  moistCalibState: document.getElementById('moist-calib-state'),
+  esp32HealthPill: document.getElementById('esp32-health-pill'),
+  esp32StateDesc: document.getElementById('esp32-state-desc'),
+  esp32MoistHealth: document.getElementById('esp32-moist-health'),
+  esp32MassHealth: document.getElementById('esp32-mass-health'),
+  esp32CalibSummary: document.getElementById('esp32-calib-summary'),
+  esp32LastSeen: document.getElementById('esp32-last-seen'),
 
-  // Weight Card
-  weightStatusPill: document.getElementById('weight-status-pill'),
-  weightVal: document.getElementById('weight-val'),
-  weightSubtext: document.getElementById('weight-subtext'),
-  weightRawCounts: document.getElementById('weight-raw-counts'),
-  weightCalibState: document.getElementById('weight-calib-state'),
-  weightTareState: document.getElementById('weight-tare-state'),
+  // Compartment Cards (Overview)
+  compAStatusPill: document.getElementById('comp-a-status-pill'),
+  compAMoistVal: document.getElementById('comp-a-moist-val'),
+  compAMoistDesc: document.getElementById('comp-a-moist-desc'),
+  compAWeightVal: document.getElementById('comp-a-weight-val'),
+  compAWeightDesc: document.getElementById('comp-a-weight-desc'),
+  compAHealth: document.getElementById('comp-a-health'),
+  compACalib: document.getElementById('comp-a-calib'),
+  compATrend: document.getElementById('comp-a-trend'),
 
-  // Proximity Card
-  proxStatusPill: document.getElementById('prox-status-pill'),
-  proxVal: document.getElementById('prox-val'),
-  proxSubtext: document.getElementById('prox-subtext'),
-  proxDetected: document.getElementById('prox-detected'),
-  proxEchoHealth: document.getElementById('prox-echo-health'),
+  compBStatusPill: document.getElementById('comp-b-status-pill'),
+  compBMoistVal: document.getElementById('comp-b-moist-val'),
+  compBMoistDesc: document.getElementById('comp-b-moist-desc'),
+  compBWeightVal: document.getElementById('comp-b-weight-val'),
+  compBWeightDesc: document.getElementById('comp-b-weight-desc'),
+  compBHealth: document.getElementById('comp-b-health'),
+  compBCalib: document.getElementById('comp-b-calib'),
+  compBTrend: document.getElementById('comp-b-trend'),
 
-  // Lid Card
-  lidStatusPill: document.getElementById('lid-status-pill'),
-  lidVal: document.getElementById('lid-val'),
-  lidSubtext: document.getElementById('lid-subtext'),
+  compCStatusPill: document.getElementById('comp-c-status-pill'),
 
-  // Two Categories
-  catBioCount: document.getElementById('cat-bio-count'),
-  catBioPct: document.getElementById('cat-bio-pct'),
-  catBioWeight: document.getElementById('cat-bio-weight'),
-  catBioBar: document.getElementById('cat-bio-bar'),
-
-  catNonbioCount: document.getElementById('cat-nonbio-count'),
-  catNonbioPct: document.getElementById('cat-nonbio-pct'),
-  catNonbioWeight: document.getElementById('cat-nonbio-weight'),
-  catNonbioBar: document.getElementById('cat-nonbio-bar'),
-
-  // Classification Form
-  selectCategory: document.getElementById('select-category'),
-  inputItemNotes: document.getElementById('input-item-notes'),
-  btnSubmitClassification: document.getElementById('btn-submit-classification'),
-
-  // Lid Table
-  lidEventsTbody: document.getElementById('lid-events-tbody'),
-  btnRefreshLid: document.getElementById('btn-refresh-lid'),
-
-  // Charts
+  // Overview Charts & Insights
   chartWeightWrap: document.getElementById('chart-weight-wrap'),
   chartMoistureWrap: document.getElementById('chart-moisture-wrap'),
+  overviewAlertsPill: document.getElementById('overview-alerts-pill'),
+  overviewAlertsList: document.getElementById('overview-alerts-list'),
+  mlInsightPill: document.getElementById('ml-insight-pill'),
+  mlPlainSummary: document.getElementById('ml-plain-summary'),
+  mlInsightProvenance: document.getElementById('ml-insight-provenance'),
+  overviewLidEventsTbody: document.getElementById('overview-lid-events-tbody'),
+  btnRefreshLidOverview: document.getElementById('btn-refresh-lid-overview'),
 
-  // Alerts & Terminal
-  alertsStatusPill: document.getElementById('alerts-status-pill'),
-  alertsContainer: document.getElementById('alerts-container'),
+  // Technical Operations: Panel A (Devices)
+  opUnoPill: document.getElementById('op-uno-pill'),
+  opUnoDev: document.getElementById('op-uno-dev'),
+  opUnoElapsed: document.getElementById('op-uno-elapsed'),
+  opUnoSeqUp: document.getElementById('op-uno-seq-up'),
+  opUnoDistProx: document.getElementById('op-uno-dist-prox'),
+  opUnoLidCmd: document.getElementById('op-uno-lid-cmd'),
+  opUnoFaults: document.getElementById('op-uno-faults'),
+  opUnoLcd: document.getElementById('op-uno-lcd'),
+  opUnoRawPacket: document.getElementById('op-uno-raw-packet'),
+
+  opEspPill: document.getElementById('op-esp-pill'),
+  opEspDev: document.getElementById('op-esp-dev'),
+  opEspElapsed: document.getElementById('op-esp-elapsed'),
+  opEspSeqUp: document.getElementById('op-esp-seq-up'),
+  opEspChansStatus: document.getElementById('op-esp-chans-status'),
+  opEspCalibNvs: document.getElementById('op-esp-calib-nvs'),
+  opEspLidSync: document.getElementById('op-esp-lid-sync'),
+  opEspLcd: document.getElementById('op-esp-lcd'),
+  opEspRawPacket: document.getElementById('op-esp-raw-packet'),
+
+  // Technical Operations: Panel B (Four Channels)
+  c1Pill: document.getElementById('c1-pill'),
+  c1PctVal: document.getElementById('c1-pct-val'),
+  c1Desc: document.getElementById('c1-desc'),
+  c1RawVal: document.getElementById('c1-raw-val'),
+  c1AirRef: document.getElementById('c1-air-ref'),
+  c1WaterRef: document.getElementById('c1-water-ref'),
+  c1HealthText: document.getElementById('c1-health-text'),
+
+  c2Pill: document.getElementById('c2-pill'),
+  c2PctVal: document.getElementById('c2-pct-val'),
+  c2Desc: document.getElementById('c2-desc'),
+  c2RawVal: document.getElementById('c2-raw-val'),
+  c2AirRef: document.getElementById('c2-air-ref'),
+  c2WaterRef: document.getElementById('c2-water-ref'),
+  c2HealthText: document.getElementById('c2-health-text'),
+
+  lc1Pill: document.getElementById('lc1-pill'),
+  lc1GVal: document.getElementById('lc1-g-val'),
+  lc1Desc: document.getElementById('lc1-desc'),
+  lc1RawVal: document.getElementById('lc1-raw-val'),
+  lc1FactorVal: document.getElementById('lc1-factor-val'),
+  lc1TareVal: document.getElementById('lc1-tare-val'),
+  lc1HealthText: document.getElementById('lc1-health-text'),
+
+  lc2Pill: document.getElementById('lc2-pill'),
+  lc2GVal: document.getElementById('lc2-g-val'),
+  lc2Desc: document.getElementById('lc2-desc'),
+  lc2RawVal: document.getElementById('lc2-raw-val'),
+  lc2FactorVal: document.getElementById('lc2-factor-val'),
+  lc2TareVal: document.getElementById('lc2-tare-val'),
+  lc2HealthText: document.getElementById('lc2-health-text'),
+
+  // Technical Operations: Panel C (Lid Diagnostics)
+  opLidStatePill: document.getElementById('op-lid-state-pill'),
+  opLidAngle: document.getElementById('op-lid-angle'),
+  opSyncStatusPill: document.getElementById('op-sync-status-pill'),
+  opSyncUnoState: document.getElementById('op-sync-uno-state'),
+  opSyncEspState: document.getElementById('op-sync-esp-state'),
+
+  // Technical Operations: Panel D (Controls & Calibration)
+  btnCmdOpen: document.getElementById('btn-cmd-open'),
+  btnCmdClose: document.getElementById('btn-cmd-close'),
+  btnCmdUnoStatus: document.getElementById('btn-cmd-uno-status'),
+  unoCmdStatus: document.getElementById('uno-cmd-status'),
+
+  btnTareLc1: document.getElementById('btn-tare-lc1'),
+  inputRefLc1: document.getElementById('input-ref-lc1'),
+  btnCalLc1: document.getElementById('btn-cal-lc1'),
+  btnTareLc2: document.getElementById('btn-tare-lc2'),
+  inputRefLc2: document.getElementById('input-ref-lc2'),
+  btnCalLc2: document.getElementById('btn-cal-lc2'),
+  btnCalC1Dry: document.getElementById('btn-cal-c1-dry'),
+  btnCalC1Wet: document.getElementById('btn-cal-c1-wet'),
+  btnCalC2Dry: document.getElementById('btn-cal-c2-dry'),
+  btnCalC2Wet: document.getElementById('btn-cal-c2-wet'),
+  esp32CmdStatus: document.getElementById('esp32-cmd-status'),
   terminalStream: document.getElementById('terminal-stream'),
-
-  // Hardware / Simulated Actuator Commands
-  cmdTare: document.getElementById('cmd-tare'),
-  cmdOpen: document.getElementById('cmd-open'),
-  cmdClose: document.getElementById('cmd-close'),
   cmdClear: document.getElementById('cmd-clear'),
 
-  // ML Analytics Cards
-  mlAnomalyPill: document.getElementById('ml-anomaly-pill'),
-  mlAnomalyScore: document.getElementById('ml-anomaly-score'),
-  mlAnomalyBar: document.getElementById('ml-anomaly-bar'),
-  mlAnomalySubtext: document.getElementById('ml-anomaly-subtext'),
-  mlAnomalyStatusText: document.getElementById('ml-anomaly-status-text'),
-  mlAnomalyF1: document.getElementById('ml-anomaly-f1'),
-  mlAnomalyProvenance: document.getElementById('ml-anomaly-provenance'),
-
-  mlForecastVal: document.getElementById('ml-forecast-val'),
-  mlForecastSubtext: document.getElementById('ml-forecast-subtext'),
-  mlForecastCurrent: document.getElementById('ml-forecast-current'),
-  mlForecastDelta: document.getElementById('ml-forecast-delta'),
-  mlForecastBaseline: document.getElementById('ml-forecast-baseline'),
-  mlForecastBenchmark: document.getElementById('ml-forecast-benchmark'),
-  btnHorizon5m: document.getElementById('btn-horizon-5m'),
-  btnHorizon15m: document.getElementById('btn-horizon-15m'),
-  btnHorizon30m: document.getElementById('btn-horizon-30m'),
-
-  mlServicePill: document.getElementById('ml-service-pill'),
-  mlRegistryVersion: document.getElementById('ml-registry-version'),
-  mlRegistrySubtext: document.getElementById('ml-registry-subtext'),
-  mlMetaDetector: document.getElementById('ml-meta-detector'),
-  mlMetaForecaster: document.getElementById('ml-meta-forecaster'),
-  mlServiceStatusText: document.getElementById('ml-service-status-text')
+  // Technical Operations: Panel F (ML & Diagnostics)
+  opMlAnomPill: document.getElementById('op-ml-anom-pill'),
+  opMlAnomScore: document.getElementById('op-ml-anom-score'),
+  opMlAnomReasons: document.getElementById('op-ml-anom-reasons'),
+  opMlFcPill: document.getElementById('op-ml-fc-pill'),
+  opMlFcVal: document.getElementById('op-ml-fc-val'),
+  opMlFcSubtext: document.getElementById('op-ml-fc-subtext'),
+  opMlCatPill: document.getElementById('op-ml-cat-pill'),
+  opMlCatVal: document.getElementById('op-ml-cat-val'),
+  opMlCatConf: document.getElementById('op-ml-cat-conf')
 };
 
 // ============================================================================
-// DIAGNOSTIC TERMINAL LOGGING
+// TERMINAL LOGGING
 // ============================================================================
 function logTerminal(message, type = 'dim') {
   if (!dom.terminalStream) return;
@@ -204,7 +275,131 @@ function logTerminal(message, type = 'dim') {
 }
 
 // ============================================================================
-// COMMON TELEMETRY PIPELINE (USED BY BOTH HARDWARE & SYNTHETIC ENGINE)
+// TWO-PAGE NAVIGATION HANDLERS
+// ============================================================================
+function initNavigation() {
+  function switchTab(tabId) {
+    state.activeTab = tabId;
+    if (tabId === 'overview') {
+      dom.tabOverview.classList.add('active');
+      dom.tabOverview.setAttribute('aria-selected', 'true');
+      dom.tabOperations.classList.remove('active');
+      dom.tabOperations.setAttribute('aria-selected', 'false');
+
+      dom.viewOverview.classList.add('active');
+      dom.viewOverview.style.display = 'block';
+      dom.viewOperations.classList.remove('active');
+      dom.viewOperations.style.display = 'none';
+      renderCharts();
+    } else {
+      dom.tabOperations.classList.add('active');
+      dom.tabOperations.setAttribute('aria-selected', 'true');
+      dom.tabOverview.classList.remove('active');
+      dom.tabOverview.setAttribute('aria-selected', 'false');
+
+      dom.viewOperations.classList.add('active');
+      dom.viewOperations.style.display = 'block';
+      dom.viewOverview.classList.remove('active');
+      dom.viewOverview.style.display = 'none';
+    }
+  }
+
+  if (dom.tabOverview) {
+    dom.tabOverview.addEventListener('click', () => switchTab('overview'));
+    dom.tabOverview.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTab('overview'); }
+    });
+  }
+
+  if (dom.tabOperations) {
+    dom.tabOperations.addEventListener('click', () => switchTab('operations'));
+    dom.tabOperations.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTab('operations'); }
+    });
+  }
+}
+
+// ============================================================================
+// MONITORING MODE CONTROLLER (LIVE HARDWARE vs SYNTHETIC SIMULATION)
+// ============================================================================
+function setMonitoringMode(targetMode, emitToServer = true) {
+  if (state.mode === targetMode) return;
+  state.mode = targetMode;
+
+  const isLive = (targetMode === 'hardware');
+
+  // Update Toggle Pill UI
+  if (dom.modeToggleSwitch) {
+    dom.modeToggleSwitch.setAttribute('aria-checked', isLive ? 'false' : 'true');
+  }
+  if (dom.modeOptLive && dom.modeOptSim) {
+    dom.modeOptLive.classList.toggle('active', isLive);
+    dom.modeOptSim.classList.toggle('active', !isLive);
+  }
+
+  // Update Persistent Banner
+  if (dom.modeBanner) {
+    dom.modeBanner.className = `mode-banner ${targetMode}`;
+  }
+  if (dom.modeBannerTitle) {
+    dom.modeBannerTitle.textContent = isLive ? 'LIVE HARDWARE MODE' : 'SIMULATION MODE — SYNTHETIC DATA';
+  }
+  if (dom.modeBannerDesc) {
+    dom.modeBannerDesc.textContent = isLive
+      ? 'Streaming live telemetry from Arduino Uno (Module A) & ESP32 (Module B).'
+      : 'Simulating 4 independent sensor channels across two microcontrollers. Physical actuators isolated.';
+  }
+  if (dom.modeBannerSubdesc) {
+    dom.modeBannerSubdesc.textContent = isLive
+      ? 'All measurements reflect physical sensor voltages and load cell strain gauges.'
+      : 'PROVENANCE: SYNTHETIC DATA GENERATOR — Real hardware not connected.';
+  }
+  if (dom.modeBannerSource) {
+    dom.modeBannerSource.textContent = isLive ? 'HARDWARE' : 'SIMULATION';
+  }
+
+  // Simulation Controls Panel Visibility
+  if (dom.simulationControls) {
+    dom.simulationControls.style.display = isLive ? 'none' : 'block';
+  }
+
+  // Update Actuator Control Availability on Operations Page
+  updateActuatorControlsAvailability();
+
+  if (!isLive) {
+    // Start synthetic simulation loop
+    startSyntheticSimulation();
+    logTerminal('Monitoring mode changed to SIMULATION (Synthetic Multi-MCU Generator Active)', 'info');
+  } else {
+    // Stop synthetic simulation loop
+    stopSyntheticSimulation();
+    logTerminal('Monitoring mode changed to LIVE HARDWARE (Awaiting physical packets)', 'info');
+  }
+
+  // Synchronize mode with backend
+  if (emitToServer && state.isBackendConnected) {
+    fetch(`${state.backendUrl}/api/monitoring/mode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mode: targetMode, source: 'dashboard_ui' })
+    }).catch(err => console.warn('Failed to post mode to server:', err));
+  }
+}
+
+function updateActuatorControlsAvailability() {
+  const isSim = (state.mode === 'simulation');
+  if (dom.btnCmdOpen) dom.btnCmdOpen.disabled = isSim;
+  if (dom.btnCmdClose) dom.btnCmdClose.disabled = isSim;
+  if (dom.unoCmdStatus) {
+    dom.unoCmdStatus.textContent = isSim
+      ? 'Actuator controls disabled in Simulation Mode to isolate physical hardware.'
+      : 'Status: Ready for Arduino Uno commands';
+    dom.unoCmdStatus.style.color = isSim ? 'var(--accent-amber)' : 'var(--text-dim)';
+  }
+}
+
+// ============================================================================
+// COMMON TELEMETRY PIPELINE (INGESTION & CACHING)
 // ============================================================================
 function processTelemetryPacket(packet, sourceName = 'Backend') {
   if (!packet || typeof packet !== 'object') return;
@@ -219,7 +414,7 @@ function processTelemetryPacket(packet, sourceName = 'Backend') {
   } else if (packet.dev && String(packet.dev).toUpperCase().includes('UNO')) {
     state.unoTelemetry = packet;
     state.lastUnoTimestamp = now;
-  } else if (packet.dist_cm !== undefined && packet.moist_raw === undefined && packet.weight_raw === undefined) {
+  } else if (packet.dist_cm !== undefined && packet.c1_raw === undefined && packet.moist_raw === undefined) {
     state.unoTelemetry = packet;
     state.lastUnoTimestamp = now;
   }
@@ -230,7 +425,7 @@ function processTelemetryPacket(packet, sourceName = 'Backend') {
   } else if (packet.dev && String(packet.dev).toUpperCase().includes('ESP32')) {
     state.esp32Telemetry = packet;
     state.lastEsp32Timestamp = now;
-  } else if (packet.moist_raw !== undefined || packet.weight_raw !== undefined) {
+  } else if (packet.c1_raw !== undefined || packet.moist_raw !== undefined || packet.lc1_raw !== undefined || packet.weight_raw !== undefined) {
     state.esp32Telemetry = packet;
     state.lastEsp32Timestamp = now;
   }
@@ -239,21 +434,47 @@ function processTelemetryPacket(packet, sourceName = 'Backend') {
     state.deviceHealth = packet.device_health;
   }
 
-  // Update composite cache
+  // Maintain composite
   state.latestTelemetry = packet;
 
-  // Render dashboard components
-  renderDeviceStatusAndStaleness();
+  // Push to history for charts (maintain last 30 data points)
+  appendHistoryPoint(packet, now);
+
+  // Render both pages
+  renderDashboard();
 }
 
-function renderDeviceStatusAndStaleness() {
+function appendHistoryPoint(packet, now) {
+  const esp = state.esp32Telemetry;
+  const lc1 = (esp && esp.lc1_g !== undefined) ? esp.lc1_g : ((esp && esp.weight_g !== undefined) ? esp.weight_g : null);
+  const lc2 = (esp && esp.lc2_g !== undefined) ? esp.lc2_g : null;
+  const c1 = (esp && esp.c1_pct !== undefined) ? esp.c1_pct : ((esp && esp.moist_pct !== undefined) ? esp.moist_pct : null);
+  const c2 = (esp && esp.c2_pct !== undefined) ? esp.c2_pct : null;
+
+  state.historyData.push({
+    time: now,
+    lc1: (lc1 !== null && !isNaN(lc1)) ? Number(lc1) : null,
+    lc2: (lc2 !== null && !isNaN(lc2)) ? Number(lc2) : null,
+    c1: (c1 !== null && !isNaN(c1)) ? Number(c1) : null,
+    c2: (c2 !== null && !isNaN(c2)) ? Number(c2) : null
+  });
+
+  if (state.historyData.length > 30) {
+    state.historyData.shift();
+  }
+}
+
+// ============================================================================
+// DASHBOARD RENDERING ENGINE
+// ============================================================================
+function renderDashboard() {
   const now = Date.now();
   const isSim = (state.mode === 'simulation');
 
-  // Evaluate Uno Status
+  // Evaluate Device Connections
   let unoStatus = 'DISCONNECTED';
   if (isSim) {
-    unoStatus = (state.simScenario === 'SCENARIO_D') ? 'DISCONNECTED' : (state.simIsPaused ? 'STALE' : 'CONNECTED');
+    unoStatus = (state.simScenario === 'SCENARIO_D' || state.simFaultActive) ? 'DISCONNECTED' : (state.simIsPaused ? 'STALE' : 'CONNECTED');
   } else if (state.deviceHealth?.uno?.status) {
     unoStatus = state.deviceHealth.uno.status;
   } else if (state.lastUnoTimestamp) {
@@ -261,10 +482,9 @@ function renderDeviceStatusAndStaleness() {
     unoStatus = elapsed <= 5.0 ? 'CONNECTED' : (elapsed <= 15.0 ? 'STALE' : 'DISCONNECTED');
   }
 
-  // Evaluate ESP32 Status
   let espStatus = 'DISCONNECTED';
   if (isSim) {
-    espStatus = (state.simScenario === 'SCENARIO_C') ? 'DISCONNECTED' : (state.simIsPaused ? 'STALE' : 'CONNECTED');
+    espStatus = (state.simScenario === 'SCENARIO_E' || state.simFaultActive) ? 'DISCONNECTED' : (state.simIsPaused ? 'STALE' : 'CONNECTED');
   } else if (state.deviceHealth?.esp32?.status) {
     espStatus = state.deviceHealth.esp32.status;
   } else if (state.lastEsp32Timestamp) {
@@ -272,1264 +492,985 @@ function renderDeviceStatusAndStaleness() {
     espStatus = elapsed <= 5.0 ? 'CONNECTED' : (elapsed <= 15.0 ? 'STALE' : 'DISCONNECTED');
   }
 
-  // 1. Update Dual Badges in Header
+  // 1. Header Badges
   updateDualBadges(unoStatus, espStatus);
 
-  // 2. Update Health Metrics Strip
-  if (dom.valUnoStatus) {
-    dom.valUnoStatus.textContent = unoStatus;
-    dom.valUnoStatus.style.color = (unoStatus === 'CONNECTED') ? 'var(--accent-forest)' : ((unoStatus === 'STALE') ? 'var(--accent-amber)' : 'var(--accent-crimson)');
-  }
-  if (dom.valEspStatus) {
-    dom.valEspStatus.textContent = espStatus;
-    dom.valEspStatus.style.color = (espStatus === 'CONNECTED') ? 'var(--accent-forest)' : ((espStatus === 'STALE') ? 'var(--accent-amber)' : 'var(--accent-crimson)');
-  }
-  if (dom.valUnoLast) {
-    dom.valUnoLast.textContent = state.lastUnoTimestamp ? new Date(state.lastUnoTimestamp).toLocaleTimeString() : 'Never';
-  }
-  if (dom.valEspLast) {
-    dom.valEspLast.textContent = state.lastEsp32Timestamp ? new Date(state.lastEsp32Timestamp).toLocaleTimeString() : 'Never';
-  }
+  // 2. Page 1: Overview Summary Metrics
+  renderSummaryMetrics(unoStatus, espStatus);
 
-  // 3. Render Module B (ESP32) Sensor Cards: Moisture & Load Cell
-  const esp = state.esp32Telemetry;
-  if (espStatus === 'DISCONNECTED') {
-    dom.moistStatusPill.className = 'card-pill fault';
-    dom.moistStatusPill.textContent = 'OFFLINE';
-    dom.moistVal.textContent = '—';
-    dom.moistSubtext.textContent = 'ESP32 disconnected — moisture unavailable';
-    dom.moistRawAdc.textContent = '—';
-    dom.moistCalibState.textContent = 'Unavailable';
+  // 3. Page 1: Device Health Summary Cards
+  renderDeviceHealthCards(unoStatus, espStatus);
 
-    dom.weightStatusPill.className = 'card-pill fault';
-    dom.weightStatusPill.textContent = 'OFFLINE';
-    dom.weightVal.textContent = '—';
-    dom.weightSubtext.textContent = 'ESP32 disconnected — load cell offline';
-    dom.weightRawCounts.textContent = '—';
-    dom.weightCalibState.textContent = 'Unavailable';
-    dom.weightTareState.textContent = 'Offline';
-  } else if (espStatus === 'STALE') {
-    dom.moistStatusPill.className = 'card-pill stale';
-    dom.moistStatusPill.textContent = 'STALE';
-    dom.moistSubtext.textContent = `Last known reading (>5s stale)`;
+  // 4. Page 1: Three Compartment Cards
+  renderCompartmentCards(espStatus);
 
-    dom.weightStatusPill.className = 'card-pill stale';
-    dom.weightStatusPill.textContent = 'STALE';
-    dom.weightSubtext.textContent = `Last known mass (>5s stale)`;
-  } else if (esp) {
-    // Moisture Card Active
-    dom.moistRawAdc.textContent = (esp.moist_raw !== null && esp.moist_raw !== undefined) ? `${esp.moist_raw} ADC` : '—';
-    if (!esp.moist_ok) {
-      dom.moistStatusPill.className = 'card-pill fault';
-      dom.moistStatusPill.textContent = 'FAULT';
-      dom.moistVal.textContent = '—';
-      dom.moistSubtext.textContent = isSim ? 'Simulated moisture fault' : 'Sensor disconnected on ADC1 Pin 34';
-      dom.moistCalibState.textContent = 'Unavailable';
-    } else if (!esp.moist_cal || esp.moist_pct === null) {
-      dom.moistStatusPill.className = 'card-pill uncalibrated';
-      dom.moistStatusPill.textContent = 'UNCALIBRATED';
-      dom.moistVal.textContent = esp.moist_raw !== null ? esp.moist_raw : '—';
-      dom.moistUnit.textContent = 'raw';
-      dom.moistSubtext.textContent = 'Raw 12-bit ADC reported. Dual-point calibration required.';
-      dom.moistCalibState.textContent = 'Not Calibrated';
-    } else {
-      dom.moistStatusPill.className = 'card-pill ok';
-      dom.moistStatusPill.textContent = isSim ? 'SIMULATED' : 'CALIBRATED';
-      dom.moistVal.textContent = Number(esp.moist_pct).toFixed(1);
-      dom.moistUnit.textContent = '%';
-      dom.moistSubtext.textContent = esp.moist_pct > 50 ? 'High moisture (organic matter)' : 'Low moisture (inorganic / dry)';
-      dom.moistCalibState.textContent = isSim ? 'ESP32 12-bit Model ✓' : 'Calibrated ✓';
-    }
+  // 5. Page 1: Charts
+  renderCharts();
 
-    // Weight Card Active
-    dom.weightRawCounts.textContent = (esp.weight_raw !== undefined && esp.weight_raw !== null) ? esp.weight_raw.toLocaleString() : '—';
-    if (!esp.weight_ok) {
-      dom.weightStatusPill.className = 'card-pill fault';
-      dom.weightStatusPill.textContent = 'TIMEOUT';
-      dom.weightVal.textContent = '—';
-      dom.weightSubtext.textContent = isSim ? 'Simulated HX711 timeout' : 'HX711 not responding on GPIO 16/4';
-      dom.weightCalibState.textContent = 'Communication Error';
-      dom.weightTareState.textContent = 'Offline';
-    } else if (!esp.weight_cal || esp.weight_g === null) {
-      dom.weightStatusPill.className = 'card-pill uncalibrated';
-      dom.weightStatusPill.textContent = 'UNCALIBRATED';
-      dom.weightVal.textContent = '—';
-      dom.weightSubtext.textContent = 'Calibration required with reference mass';
-      dom.weightCalibState.textContent = 'Required';
-      dom.weightTareState.textContent = 'Initialized';
-    } else {
-      dom.weightStatusPill.className = 'card-pill ok';
-      dom.weightStatusPill.textContent = isSim ? 'SIMULATED' : 'OPERATIONAL';
-      dom.weightVal.textContent = Number(esp.weight_g).toFixed(1);
-      dom.weightSubtext.textContent = esp.weight_g > 10 ? 'Waste mass present on platform' : 'Empty platform';
-      dom.weightCalibState.textContent = isSim ? 'Synthetic Calibration ✓' : 'Calibrated ✓';
-      dom.weightTareState.textContent = 'Tared ✓';
-    }
-  }
+  // 6. Page 1: Plain-English Alerts & ML Insights
+  renderAlertsAndMLInsights(unoStatus, espStatus);
 
-  // 4. Render Module A (Arduino Uno) Sensor Cards: Proximity & Lid
-  const uno = state.unoTelemetry;
-  if (unoStatus === 'DISCONNECTED') {
-    dom.proxStatusPill.className = 'card-pill fault';
-    dom.proxStatusPill.textContent = 'OFFLINE';
-    dom.proxVal.textContent = '—';
-    dom.proxSubtext.textContent = 'Arduino Uno disconnected — proximity offline';
-    dom.proxDetected.textContent = 'Offline';
-    dom.proxEchoHealth.textContent = 'No Signal';
-
-    dom.lidStatusPill.className = 'card-pill fault';
-    dom.lidStatusPill.textContent = 'OFFLINE';
-    dom.lidVal.textContent = uno ? uno.lid_cmd : 'CLOSED';
-    dom.lidSubtext.textContent = 'Uno disconnected — autonomous safety loop active locally';
-  } else if (unoStatus === 'STALE') {
-    dom.proxStatusPill.className = 'card-pill stale';
-    dom.proxStatusPill.textContent = 'STALE';
-    dom.proxSubtext.textContent = `Last known distance (>5s stale)`;
-  } else if (uno) {
-    // Proximity Card Active
-    if (uno.dist_cm === null || uno.dist_cm === undefined || uno.dist_cm < 0) {
-      dom.proxStatusPill.className = 'card-pill fault';
-      dom.proxStatusPill.textContent = 'TIMEOUT';
-      dom.proxVal.textContent = '—';
-      dom.proxSubtext.textContent = isSim ? 'Simulated echo timeout' : 'Echo pulse timed out or out of range';
-      dom.proxDetected.textContent = 'Unknown';
-      dom.proxEchoHealth.textContent = 'No Echo';
-    } else {
-      dom.proxVal.textContent = Number(uno.dist_cm).toFixed(1);
-      dom.proxEchoHealth.textContent = 'Valid Pulse';
-
-      if (uno.prox) {
-        dom.proxStatusPill.className = 'card-pill warn';
-        dom.proxStatusPill.textContent = 'OBJECT DETECTED';
-        dom.proxDetected.textContent = 'Active (≤ 20.0cm)';
-        dom.proxSubtext.textContent = 'Target approaching — auto lid triggered';
-      } else {
-        dom.proxStatusPill.className = 'card-pill ok';
-        dom.proxStatusPill.textContent = 'CLEAR';
-        dom.proxDetected.textContent = 'No Object';
-        dom.proxSubtext.textContent = 'Clear detection zone (> 20.0cm)';
-      }
-    }
-
-    // Lid Card Active
-    const lidCmd = (uno.lid_cmd || 'CLOSED').toUpperCase();
-    dom.lidVal.textContent = lidCmd;
-    if (lidCmd === 'OPEN') {
-      dom.lidStatusPill.className = 'card-pill warn';
-      dom.lidStatusPill.textContent = 'OPEN';
-      dom.lidSubtext.textContent = isSim
-        ? 'Simulated command: 90° angle (Servo has no position feedback)'
-        : 'Commanded angle: 90° (Active deposition window)';
-    } else if (lidCmd === 'OPENING') {
-      dom.lidStatusPill.className = 'card-pill warn';
-      dom.lidStatusPill.textContent = 'OPENING';
-      dom.lidSubtext.textContent = 'Servo moving to open position';
-    } else if (lidCmd === 'CLOSING') {
-      dom.lidStatusPill.className = 'card-pill ok';
-      dom.lidStatusPill.textContent = 'CLOSING';
-      dom.lidSubtext.textContent = 'Hold timer expired; servo returning to 0°';
-    } else {
-      dom.lidStatusPill.className = 'card-pill ok';
-      dom.lidStatusPill.textContent = 'CLOSED';
-      dom.lidSubtext.textContent = isSim
-        ? 'Simulated command: 0° angle (Closed position)'
-        : 'Commanded angle: 0° (Closed)';
-    }
-  }
-
-  // 5. Fault Aggregation & Alert Rendering
-  const allFaults = [];
-  if (uno && Array.isArray(uno.faults)) allFaults.push(...uno.faults);
-  if (esp && Array.isArray(esp.faults)) allFaults.push(...esp.faults);
-  if (unoStatus === 'DISCONNECTED' && !allFaults.includes('UNO_OFFLINE')) allFaults.push('UNO_OFFLINE');
-  if (espStatus === 'DISCONNECTED' && !allFaults.includes('ESP32_OFFLINE')) allFaults.push('ESP32_OFFLINE');
-
-  dom.valFaultCount.textContent = allFaults.length;
-  renderAlerts(state.latestTelemetry || {}, allFaults);
-
-  // 6. Request ML inference with Composite Telemetry
-  const compositeForMl = {
-    v: 1,
-    dev: 'COMPOSITE',
-    source: isSim ? 'simulation' : 'hardware',
-    timestamp: new Date().toISOString(),
-    dist_cm: (unoStatus !== 'DISCONNECTED' && uno) ? uno.dist_cm : null,
-    prox: (unoStatus !== 'DISCONNECTED' && uno) ? Boolean(uno.prox) : false,
-    lid_cmd: (unoStatus !== 'DISCONNECTED' && uno) ? uno.lid_cmd : 'CLOSED',
-    moist_raw: (espStatus !== 'DISCONNECTED' && esp) ? esp.moist_raw : null,
-    moist_pct: (espStatus !== 'DISCONNECTED' && esp) ? esp.moist_pct : null,
-    moist_ok: (espStatus !== 'DISCONNECTED' && esp) ? Boolean(esp.moist_ok) : false,
-    weight_g: (espStatus !== 'DISCONNECTED' && esp) ? esp.weight_g : null,
-    weight_raw: (espStatus !== 'DISCONNECTED' && esp) ? esp.weight_raw : null,
-    weight_ok: (espStatus !== 'DISCONNECTED' && esp) ? Boolean(esp.weight_ok) : false,
-    faults: allFaults
-  };
-  requestMlInference(compositeForMl);
+  // 7. Page 2: Technical Operations Panel
+  renderTechnicalOperations(unoStatus, espStatus);
 }
 
-// ============================================================================
-// DUAL CONNECTION STATUS BADGE MANAGEMENT
-// ============================================================================
 function updateDualBadges(unoStatus, espStatus) {
   if (dom.unoConnBadge && dom.unoConnText) {
-    dom.unoConnBadge.className = 'badge-status';
-    if (unoStatus === 'CONNECTED') {
-      dom.unoConnBadge.classList.add('online');
-      dom.unoConnText.textContent = 'Uno: Live (D4-D6)';
-    } else if (unoStatus === 'STALE') {
-      dom.unoConnBadge.classList.add('stale');
-      dom.unoConnText.textContent = 'Uno: Stale (>5s)';
-    } else {
-      dom.unoConnBadge.classList.add('offline');
-      dom.unoConnText.textContent = 'Uno: Offline';
-    }
+    dom.unoConnBadge.className = `badge-status ${unoStatus.toLowerCase()}`;
+    dom.unoConnText.textContent = `Uno: ${unoStatus}`;
   }
-
   if (dom.espConnBadge && dom.espConnText) {
-    dom.espConnBadge.className = 'badge-status';
-    if (espStatus === 'CONNECTED') {
-      dom.espConnBadge.classList.add('online');
-      dom.espConnText.textContent = 'ESP32: Live (34, 16/4)';
-    } else if (espStatus === 'STALE') {
-      dom.espConnBadge.classList.add('stale');
-      dom.espConnText.textContent = 'ESP32: Stale (>5s)';
+    dom.espConnBadge.className = `badge-status ${espStatus.toLowerCase()}`;
+    dom.espConnText.textContent = `ESP32: ${espStatus}`;
+  }
+}
+
+// ----------------------------------------------------------------------------
+// PAGE 1: SUMMARY METRICS
+// ----------------------------------------------------------------------------
+function renderSummaryMetrics(unoStatus, espStatus) {
+  const esp = state.esp32Telemetry;
+  const uno = state.unoTelemetry;
+
+  // Calculate Total Measured Weight (strictly from LC1 and LC2)
+  let totalGrams = 0;
+  let validChannelsCount = 0;
+  let missingChannelsCount = 0;
+
+  if (espStatus === 'CONNECTED' && esp) {
+    const lc1 = (esp.lc1_g !== undefined) ? esp.lc1_g : esp.weight_g;
+    const lc2 = esp.lc2_g;
+
+    if (lc1 !== null && lc1 !== undefined && !isNaN(lc1)) {
+      totalGrams += Number(lc1);
+      validChannelsCount++;
     } else {
-      dom.espConnBadge.classList.add('offline');
-      dom.espConnText.textContent = 'ESP32: Offline';
+      missingChannelsCount++;
     }
-  }
-}
 
-// Check Staleness Loop (Runs every 2 seconds)
-setInterval(() => {
-  renderDeviceStatusAndStaleness();
-}, 2000);
-
-// ============================================================================
-// SYSTEM ALERTS & DIAGNOSTICS RENDERING
-// ============================================================================
-function renderAlerts(packet, faults) {
-  dom.alertsContainer.innerHTML = '';
-
-  let hasFault = false;
-  let hasWarning = false;
-
-  if (faults.includes('HX711_TIMEOUT')) {
-    hasFault = true;
-    addAlertRow('fault', 'HX711 Load Cell Timeout: No response from amplifier on digital pins D2/D3.');
-  }
-
-  if (faults.includes('MOISTURE_OFFLINE')) {
-    hasFault = true;
-    addAlertRow('fault', 'Moisture Sensor Disconnected: Analog reading on A0 outside valid limits (50–980).');
-  }
-
-  if (faults.includes('ULTRASONIC_TIMEOUT')) {
-    hasWarning = true;
-    addAlertRow('warn', 'HC-SR04 Echo Timeout: Ultrasonic sensor echo missed or out of range (>200cm).');
-  }
-
-  if (faults.includes('HARDWARE_UNAVAILABLE')) {
-    hasWarning = true;
-    addAlertRow('warn', 'Hardware Unavailable: Simulation Mode active without physical serial gateway.');
-  }
-
-  if (faults.includes('CALIBRATION_REQUIRED') || (!packet.moist_cal && packet.moist_ok) || (!packet.weight_cal && packet.weight_ok)) {
-    hasWarning = true;
-    addAlertRow('warn', 'Calibration Required: Sensor readings are qualitative until dual-point calibration is executed.');
-  }
-
-  if (!hasFault && !hasWarning) {
-    dom.alertsStatusPill.className = 'card-pill ok';
-    dom.alertsStatusPill.textContent = 'NOMINAL';
-    addAlertRow('info', packet.source === 'simulation' 
-      ? 'Synthetic simulation engine operating nominally without active faults.'
-      : 'All physical sensors and actuator reporting healthy telemetry.');
-  } else if (hasFault) {
-    dom.alertsStatusPill.className = 'card-pill fault';
-    dom.alertsStatusPill.textContent = 'FAULT DETECTED';
-  } else {
-    dom.alertsStatusPill.className = 'card-pill warn';
-    dom.alertsStatusPill.textContent = 'WARNING';
-  }
-}
-
-function addAlertRow(type, text) {
-  const row = document.createElement('div');
-  row.className = `alert-row ${type}`;
-  const icon = type === 'fault' ? '⚠' : (type === 'warn' ? '⚡' : '✓');
-  row.innerHTML = `<span style="font-weight: bold;">${icon}</span><span>${text}</span>`;
-  dom.alertsContainer.appendChild(row);
-}
-
-// ============================================================================
-// DETERMINISTIC SYNTHETIC TELEMETRY ENGINE
-// ============================================================================
-const simulationEngine = {
-  seq: 100,
-  up: 0,
-  moistPercent: 52.0,
-  weightG: 185.0,
-  distanceCm: 68.0,
-  prox: false,
-  lidCmd: 'CLOSED',
-
-  // Proximity & Lid Cycle State Machine:
-  // 'APPROACH_WAIT' -> 'APPROACHING' -> 'TRIGGER_OPEN' -> 'HOLDING' -> 'DEPARTING' -> 'CLOSING'
-  cycleState: 'APPROACH_WAIT',
-  cycleTicks: 0,
-  holdTicksRemaining: 0,
-
-  // Scenario B accumulation
-  binFillMass: 45.0,
-
-  reset() {
-    this.seq = 100;
-    this.up = 0;
-    this.cycleState = 'APPROACH_WAIT';
-    this.cycleTicks = 0;
-    this.holdTicksRemaining = 0;
-    this.lidCmd = 'CLOSED';
-    this.prox = false;
-    this.distanceCm = 68.0;
-
-    if (state.simScenario === 'SCENARIO_B') {
-      this.binFillMass = 45.0;
-      this.weightG = 45.0;
-      this.moistPercent = 38.0;
+    if (lc2 !== null && lc2 !== undefined && !isNaN(lc2)) {
+      totalGrams += Number(lc2);
+      validChannelsCount++;
     } else {
-      this.weightG = 185.0;
-      this.moistPercent = 52.0;
-    }
-
-    state.simHistoryData = [];
-    state.simLidEvents = [];
-    renderLidEventsList(state.simLidEvents);
-    logTerminal(`[SIMULATION] Simulation engine reset to initial state.`, 'in');
-  },
-
-  forceOpen() {
-    this.cycleState = 'HOLDING';
-    this.lidCmd = 'OPEN';
-    this.prox = true;
-    this.distanceCm = 12.0;
-    this.holdTicksRemaining = Math.max(1, Math.round(4000 / state.simIntervalMs));
-    this.recordSimLidEvent('MANUAL_OVERRIDE (SIM)', 'CLOSED', 'OPEN', 12.0);
-  },
-
-  forceClose() {
-    this.cycleState = 'APPROACH_WAIT';
-    this.lidCmd = 'CLOSED';
-    this.prox = false;
-    this.distanceCm = 65.0;
-    this.holdTicksRemaining = 0;
-    this.recordSimLidEvent('MANUAL_OVERRIDE (SIM)', 'OPEN', 'CLOSED', 65.0);
-  },
-
-  recordSimLidEvent(trigger, prev, next, dist) {
-    const ev = {
-      timestamp: new Date().toISOString(),
-      trigger: trigger,
-      previous_state: prev,
-      new_state: next,
-      distance_cm: dist,
-      source: 'SIMULATION'
-    };
-    state.simLidEvents.push(ev);
-    if (state.simLidEvents.length > 50) state.simLidEvents.shift();
-    if (state.mode === 'simulation') {
-      renderLidEventsList(state.simLidEvents);
-    }
-  },
-
-  unoSeq: 100,
-  espSeq: 100,
-  tick() {
-    if (state.simIsPaused) return;
-
-    this.up += Math.round(state.simIntervalMs / 1000);
-    this.cycleTicks++;
-
-    const isUnoActive = (state.simScenario !== 'SCENARIO_D'); // SCENARIO_D: ESP32 only, Uno offline
-    const isEspActive = (state.simScenario !== 'SCENARIO_C'); // SCENARIO_C: Uno only, ESP32 offline
-
-    // -------------------------------------------------------------------------
-    // 1. SIMULATE MODULE A (ARDUINO UNO): PROXIMITY & LID STATE MACHINE
-    // -------------------------------------------------------------------------
-    if (isUnoActive) {
-      this.unoSeq++;
-      const unoFaults = [];
-      const intervalSec = state.simIntervalMs / 1000;
-      const holdTicksTotal = Math.max(1, Math.round(4.0 / intervalSec));
-
-      switch (this.cycleState) {
-        case 'APPROACH_WAIT':
-          this.lidCmd = 'CLOSED';
-          this.prox = false;
-          this.distanceCm = 65.0 + (Math.sin(this.cycleTicks * 0.5) * 6);
-          if (this.cycleTicks >= 5) {
-            this.cycleState = 'APPROACHING';
-            this.cycleTicks = 0;
-          }
-          break;
-
-        case 'APPROACHING':
-          this.distanceCm = Math.max(12.0, 48.0 - (this.cycleTicks * 12.0));
-          if (this.distanceCm <= 20.0) {
-            this.prox = true;
-            const prevLid = this.lidCmd;
-            this.lidCmd = 'OPEN';
-            this.cycleState = 'HOLDING';
-            this.cycleTicks = 0;
-            this.holdTicksRemaining = holdTicksTotal;
-            this.recordSimLidEvent('PROXIMITY_DETECTED (SIM)', prevLid, 'OPEN', this.distanceCm);
-            logTerminal(`[SIM-UNO] Proximity triggered (dist: ${this.distanceCm.toFixed(1)} cm ≤ 20cm). Servo commanded 90° OPEN.`, 'out');
-          }
-          break;
-
-        case 'HOLDING':
-          this.prox = true;
-          this.distanceCm = 13.5 + (Math.random() * 2.0);
-          this.holdTicksRemaining--;
-          if (this.holdTicksRemaining <= 0) {
-            this.cycleState = 'DEPARTING';
-            this.cycleTicks = 0;
-          }
-          break;
-
-        case 'DEPARTING':
-          this.distanceCm = 28.0 + (this.cycleTicks * 14.0);
-          this.prox = false;
-          if (this.distanceCm > 20.0) {
-            this.cycleState = 'CLOSING';
-            this.cycleTicks = 0;
-          }
-          break;
-
-        case 'CLOSING':
-          const prevLid = this.lidCmd;
-          this.lidCmd = 'CLOSED';
-          this.recordSimLidEvent('HOLD_TIMER_EXPIRED (SIM)', prevLid, 'CLOSED', this.distanceCm);
-          logTerminal(`[SIM-UNO] Hold timer (4s) expired. Servo commanded 0° CLOSED.`, 'out');
-
-          if (state.simScenario === 'SCENARIO_B') {
-            const deposit = 75 + Math.round(Math.random() * 65);
-            this.binFillMass += deposit;
-            this.moistPercent = Math.min(88.0, this.moistPercent + (Math.random() * 4.5));
-            logTerminal(`[SIM: Scenario B] Deposited +${deposit}g organic waste. Cumulative mass: ${this.binFillMass.toFixed(0)}g.`, 'in');
-          }
-
-          this.cycleState = 'APPROACH_WAIT';
-          this.cycleTicks = 0;
-          break;
-      }
-
-      let distCm = Math.round(this.distanceCm * 10) / 10;
-      if (state.simFaultActive && state.simScenario === 'SCENARIO_E') {
-        distCm = null;
-        this.prox = false;
-        unoFaults.push('ULTRASONIC_TIMEOUT');
-      }
-
-      const unoPacket = {
-        v: 1,
-        dev: "SIM-UNO01",
-        seq: this.unoSeq,
-        up: this.up,
-        source: "simulation",
-        sim_session_id: state.simSessionId,
-        scenario: state.simScenario,
-        dist_cm: distCm,
-        prox: this.prox,
-        lid_cmd: this.lidCmd,
-        faults: unoFaults
-      };
-
-      processTelemetryPacket(unoPacket, 'Simulated Uno');
-    }
-
-    // -------------------------------------------------------------------------
-    // 2. SIMULATE MODULE B (ESP32): MOISTURE & LOAD CELL
-    // -------------------------------------------------------------------------
-    if (isEspActive) {
-      this.espSeq++;
-      const espFaults = [];
-      let moistOk = true;
-      let weightOk = true;
-
-      if (state.simFaultActive && state.simScenario === 'SCENARIO_E') {
-        espFaults.push('HX711_TIMEOUT', 'MOISTURE_OFFLINE');
-        moistOk = false;
-        weightOk = false;
-      }
-
-      let weightG;
-      if (state.simScenario === 'SCENARIO_B') {
-        weightG = this.binFillMass + (Math.random() * 2.0 - 1.0);
-      } else {
-        weightG = Math.max(0, this.weightG + (Math.sin(this.up * 0.1) * 2.5) + (Math.random() * 1.0 - 0.5));
-      }
-      let weightRaw = Math.round(100000 + (weightG * 420.0));
-
-      let moistPct;
-      if (state.simScenario === 'SCENARIO_B') {
-        moistPct = Math.min(100, Math.max(0, this.moistPercent + (Math.sin(this.up * 0.05) * 1.5)));
-      } else {
-        moistPct = Math.min(100, Math.max(0, this.moistPercent + (Math.sin(this.up * 0.08) * 8.0) + (Math.random() * 1.0 - 0.5)));
-      }
-
-      // ESP32 12-Bit ADC Model: Dry ~3200 ADC, Wet ~1400 ADC
-      const adcNoise = Math.round(Math.random() * 8 - 4);
-      let moistRaw = Math.max(200, Math.min(3950, Math.round(3200 - (moistPct / 100.0) * 1800 + adcNoise)));
-
-      if (!moistOk) {
-        moistPct = null;
-        moistRaw = 4095;
-      }
-      if (!weightOk) {
-        weightG = null;
-        weightRaw = 0;
-      }
-
-      const espPacket = {
-        v: 1,
-        dev: "SIM-ESP01",
-        seq: this.espSeq,
-        up: this.up,
-        source: "simulation",
-        sim_session_id: state.simSessionId,
-        scenario: state.simScenario,
-        moist_raw: moistRaw,
-        moist_pct: moistPct !== null ? Math.round(moistPct * 10) / 10 : null,
-        moist_ok: moistOk,
-        moist_cal: true,
-        weight_raw: weightRaw,
-        weight_g: weightG !== null ? Math.round(weightG * 10) / 10 : null,
-        weight_ok: weightOk,
-        weight_cal: true,
-        faults: espFaults
-      };
-
-      processTelemetryPacket(espPacket, 'Simulated ESP32');
-
-      // Update simulation charts
-      if (weightG !== null || moistPct !== null) {
-        state.simHistoryData.push({
-          timestamp: new Date().toISOString(),
-          weight_g: weightG !== null ? Math.round(weightG * 10) / 10 : null,
-          moist_pct: moistPct !== null ? Math.round(moistPct * 10) / 10 : null
-        });
-        if (state.simHistoryData.length > 50) state.simHistoryData.shift();
-
-        renderLineChart(dom.chartWeightWrap, state.simHistoryData, 'weight_g', 'Weight (g)', '#15803d');
-        renderLineChart(dom.chartMoistureWrap, state.simHistoryData, 'moist_pct', 'Moisture (%)', '#0f766e');
-      }
+      missingChannelsCount++;
     }
   }
-};
 
-// ============================================================================
-// MONITORING MODE SWITCHING LOGIC
-// ============================================================================
-function setMonitoringMode(targetMode) {
-  // Prevent rapid switching race conditions with 250ms debounce
-  if (state.debounceTimer) return;
-  state.debounceTimer = setTimeout(() => { state.debounceTimer = null; }, 250);
-
-  if (targetMode === state.mode) return;
-
-  if (targetMode === 'simulation') {
-    state.mode = 'simulation';
-
-    // 1. Update Mode Switch UI
-    dom.modeToggleSwitch.setAttribute('aria-checked', 'true');
-    dom.modeOptLive.classList.remove('active');
-    dom.modeOptSim.classList.add('active');
-
-    // 2. Update Mode Banner
-    dom.modeBanner.className = 'mode-banner simulation';
-    dom.modeBannerTitle.textContent = 'SIMULATION MODE — SYNTHETIC DATA';
-    dom.modeBannerDesc.textContent = 'Real-time synthetic sensor generator active. Testing scenarios without physical Arduino.';
-    dom.modeBannerSubdesc.textContent = 'Hardware Isolated • Zero Physical Serial I/O • Isolated Simulation History';
-    dom.modeBannerSource.textContent = 'SIMULATION';
-
-    // 3. Show Simulation Controls Panel
-    dom.simulationControls.style.display = 'block';
-
-    // 4. Update Section Subtitles
-    dom.sensorSectionTitle.textContent = 'Sensor Telemetry (Synthetic Simulation)';
-    dom.sensorSectionSubtitle.textContent = 'Deterministic Emulated Stream • Provenance: simulation';
-    dom.chartSectionTitle.textContent = 'Historical Sensor Analytics (Simulation Stream)';
-    dom.chartSectionSubtitle.textContent = 'Rendered from In-Memory Simulation Buffer (Zero Production Log Pollution)';
-
-    // 5. Initialize Simulation Session
-    state.simSessionId = 'SIM-' + Math.floor(Date.now() / 1000);
-    state.simStartedAt = new Date().toLocaleTimeString();
-    state.simHistoryData = [];
-    state.simLidEvents = [];
-    simulationEngine.reset();
-
-    // 6. Launch Simulation Interval
-    if (state.simIntervalId) clearInterval(state.simIntervalId);
-    state.simIntervalId = setInterval(() => simulationEngine.tick(), state.simIntervalMs);
-    simulationEngine.tick(); // Immediate first tick
-
-    logTerminal(`[MODE] Switched to SIMULATION MODE (${state.simScenario}). Synthetic telemetry started.`, 'in');
-
-    // 7. Inform Backend of mode switch
-    fetch(`${state.backendUrl}/api/monitoring/mode`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: 'simulation' })
-    }).catch(() => {});
-
-  } else {
-    state.mode = 'hardware';
-
-    // 1. Immediately halt synthetic generator
-    if (state.simIntervalId) {
-      clearInterval(state.simIntervalId);
-      state.simIntervalId = null;
-    }
-
-    // 2. Update Mode Switch UI
-    dom.modeToggleSwitch.setAttribute('aria-checked', 'false');
-    dom.modeOptLive.classList.add('active');
-    dom.modeOptSim.classList.remove('active');
-
-    // 3. Update Mode Banner
-    dom.modeBanner.className = 'mode-banner live';
-    dom.modeBannerTitle.textContent = 'LIVE HARDWARE MODE';
-    dom.modeBannerDesc.textContent = 'Receiving physical telemetry from Arduino Uno R3 via Serial Gateway or Web Serial.';
-    dom.modeBannerSubdesc.textContent = 'Hardware disconnected — connect the Arduino or switch to Simulation Mode.';
-    dom.modeBannerSource.textContent = 'HARDWARE';
-
-    // 4. Hide Simulation Controls Panel
-    dom.simulationControls.style.display = 'none';
-
-    // 5. Restore Subtitles
-    dom.sensorSectionTitle.textContent = 'Live Sensor Telemetry';
-    dom.sensorSectionSubtitle.textContent = 'Actual Physical Readings Only';
-    dom.chartSectionTitle.textContent = 'Historical Sensor Analytics';
-    dom.chartSectionSubtitle.textContent = 'Rendered from Actual Backend Records (Zero Fabricated Points)';
-
-    logTerminal(`[MODE] Switched to LIVE HARDWARE MODE. Synthetic generator stopped. Awaiting hardware.`, 'dim');
-
-    // 6. Fetch genuine hardware history and events
-    fetchHistoricalData();
-    fetchLidEvents();
-
-    // 7. Inform Backend
-    fetch(`${state.backendUrl}/api/monitoring/mode`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ mode: 'hardware' })
-    }).catch(() => {});
-
-    // 8. Poll hardware immediately
-    pollBackendTelemetry();
-  }
-}
-
-// Toggle Event Listeners (Click & Keyboard accessibility)
-dom.modeToggleSwitch.addEventListener('click', () => {
-  const nextMode = state.mode === 'hardware' ? 'simulation' : 'hardware';
-  setMonitoringMode(nextMode);
-});
-
-dom.modeToggleSwitch.addEventListener('keydown', (e) => {
-  if (e.key === ' ' || e.key === 'Enter') {
-    e.preventDefault();
-    const nextMode = state.mode === 'hardware' ? 'simulation' : 'hardware';
-    setMonitoringMode(nextMode);
-  }
-});
-
-// ============================================================================
-// SIMULATION CONTROL PANEL LISTENERS
-// ============================================================================
-dom.simScenarioSelect.addEventListener('change', (e) => {
-  state.simScenario = e.target.value;
-  simulationEngine.reset();
-  logTerminal(`[SIMULATION] Scenario changed to: ${state.simScenario}`, 'in');
-});
-
-dom.simSpeedSelect.addEventListener('change', (e) => {
-  state.simIntervalMs = parseInt(e.target.value, 10);
-  if (state.simIntervalId && !state.simIsPaused) {
-    clearInterval(state.simIntervalId);
-    state.simIntervalId = setInterval(() => simulationEngine.tick(), state.simIntervalMs);
-  }
-  logTerminal(`[SIMULATION] Update interval changed to: ${state.simIntervalMs}ms`, 'dim');
-});
-
-dom.btnSimPause.addEventListener('click', () => {
-  state.simIsPaused = !state.simIsPaused;
-  if (state.simIsPaused) {
-    dom.simPauseIcon.textContent = '▶';
-    dom.simPauseText.textContent = 'Resume';
-    dom.btnSimPause.classList.add('active');
-    logTerminal(`[SIMULATION] Simulation paused.`, 'dim');
-  } else {
-    dom.simPauseIcon.textContent = '⏸';
-    dom.simPauseText.textContent = 'Pause';
-    dom.btnSimPause.classList.remove('active');
-    logTerminal(`[SIMULATION] Simulation resumed.`, 'in');
-  }
-});
-
-dom.btnSimReset.addEventListener('click', () => {
-  simulationEngine.reset();
-  simulationEngine.tick();
-});
-
-dom.btnSimFault.addEventListener('click', () => {
-  state.simFaultActive = !state.simFaultActive;
-  if (state.simFaultActive) {
-    dom.btnSimFault.classList.add('active');
-    dom.simFaultText.textContent = 'Clear Fault';
-    logTerminal(`[SIMULATION] Injected simulated sensor communication fault (HX711/Moisture Offline).`, 'err');
-  } else {
-    dom.btnSimFault.classList.remove('active');
-    dom.simFaultText.textContent = 'Simulate Fault';
-    logTerminal(`[SIMULATION] Cleared simulated faults. Normal simulation restored.`, 'in');
-  }
-});
-
-// ============================================================================
-// DUAL WASTE CATEGORIES FETCH & UPDATE
-// ============================================================================
-async function fetchCategoryStats() {
-  try {
-    const res = await fetch(`${state.backendUrl}/api/categories`);
-    if (!res.ok) return;
-    const data = await res.json();
-    state.categoryStats = data;
-
-    const bio = data.biodegradable || { count: 0, percentage: 0, total_weight_grams: 0 };
-    const nonbio = data.non_biodegradable || { count: 0, percentage: 0, total_weight_grams: 0 };
-
-    dom.catBioCount.textContent = bio.count;
-    dom.catBioPct.textContent = `${bio.percentage}%`;
-    dom.catBioWeight.textContent = `${(bio.total_weight_grams / 1000).toFixed(2)} kg`;
-    dom.catBioBar.style.width = `${bio.percentage}%`;
-
-    dom.catNonbioCount.textContent = nonbio.count;
-    dom.catNonbioPct.textContent = `${nonbio.percentage}%`;
-    dom.catNonbioWeight.textContent = `${(nonbio.total_weight_grams / 1000).toFixed(2)} kg`;
-    dom.catNonbioBar.style.width = `${nonbio.percentage}%`;
-  } catch (err) {
-    // Backend unreachable
-  }
-}
-
-// Classification Entry Form Submit
-dom.btnSubmitClassification.addEventListener('click', async () => {
-  const category = dom.selectCategory.value;
-  const notes = dom.inputItemNotes.value.trim();
-
-  const weight = (state.latestTelemetry && state.latestTelemetry.weight_g !== null)
-    ? state.latestTelemetry.weight_g : 0;
-  const moisture = (state.latestTelemetry && state.latestTelemetry.moist_pct !== null)
-    ? state.latestTelemetry.moist_pct : null;
-
-  const isSim = (state.mode === 'simulation');
-
-  try {
-    const res = await fetch(`${state.backendUrl}/api/classification`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        category,
-        notes: isSim ? `[SIMULATION TEST] ${notes}` : notes,
-        weight_g: weight,
-        moisture_pct: moisture,
-        source: isSim ? 'SIMULATION_VERIFIED' : 'OPERATOR_VERIFIED'
-      })
-    });
-
-    if (res.ok) {
-      logTerminal(`✓ Verified classification recorded: ${category} (${notes || 'No description'})`, 'in');
-      dom.inputItemNotes.value = '';
-      fetchCategoryStats();
+  if (dom.valTotalWeight && dom.subTotalWeight) {
+    if (validChannelsCount === 2) {
+      dom.valTotalWeight.textContent = (totalGrams / 1000.0).toFixed(2);
+      dom.unitTotalWeight.textContent = 'kg';
+      dom.subTotalWeight.textContent = 'Sum of Compartments A & B (Full)';
+    } else if (validChannelsCount === 1) {
+      dom.valTotalWeight.textContent = (totalGrams / 1000.0).toFixed(2);
+      dom.unitTotalWeight.textContent = 'kg (Partial)';
+      dom.subTotalWeight.textContent = '1 of 2 load cells reporting';
     } else {
-      logTerminal(`Error submitting classification: ${res.statusText}`, 'err');
+      dom.valTotalWeight.textContent = '—';
+      dom.unitTotalWeight.textContent = '';
+      dom.subTotalWeight.textContent = 'Weight data unavailable';
     }
-  } catch (err) {
-    logTerminal(`Failed to reach backend for classification logging: ${err.message}`, 'err');
   }
-});
 
-// ============================================================================
-// LID ACTIVITY LOG FETCH & RENDER
-// ============================================================================
-function renderLidEventsList(events) {
-  if (!Array.isArray(events) || events.length === 0) {
-    dom.lidEventsTbody.innerHTML = `
-      <tr>
-        <td colspan="5" class="empty-state-notice">
-          No lid opening events recorded yet. Connect sensor hardware or run Simulation Mode.
-        </td>
-      </tr>`;
+  // Commanded Lid State
+  if (dom.valSummaryLid) {
+    if (unoStatus === 'CONNECTED' && uno && uno.lid_cmd) {
+      dom.valSummaryLid.textContent = uno.lid_cmd;
+      dom.valSummaryLid.style.color = (uno.lid_cmd === 'OPEN') ? 'var(--accent-forest)' : 'var(--text-main)';
+    } else {
+      dom.valSummaryLid.textContent = 'UNKNOWN';
+      dom.valSummaryLid.style.color = 'var(--text-dim)';
+    }
+  }
+
+  // Devices Online Count
+  if (dom.valSummaryDevices) {
+    let onlineCount = (unoStatus === 'CONNECTED' ? 1 : 0) + (espStatus === 'CONNECTED' ? 1 : 0);
+    dom.valSummaryDevices.textContent = `${onlineCount} / 2 Online`;
+  }
+
+  // Active Warnings
+  let warningsCount = 0;
+  if (unoStatus !== 'CONNECTED') warningsCount++;
+  if (espStatus !== 'CONNECTED') warningsCount++;
+  if (esp && (esp.c1_cal === false || esp.c2_cal === false || esp.lc1_cal === false || esp.lc2_cal === false)) warningsCount++;
+  if (dom.valSummaryWarnings) {
+    dom.valSummaryWarnings.textContent = `${warningsCount} ${warningsCount === 1 ? 'Notice' : 'Notices'}`;
+    dom.valSummaryWarnings.style.color = (warningsCount === 0) ? 'var(--accent-forest)' : 'var(--accent-amber)';
+  }
+
+  // Last Update
+  if (dom.valSummaryLastUpdate) {
+    if (state.lastTelemetryTimestamp) {
+      dom.valSummaryLastUpdate.textContent = new Date(state.lastTelemetryTimestamp).toLocaleTimeString();
+    } else {
+      dom.valSummaryLastUpdate.textContent = 'Waiting';
+    }
+  }
+}
+
+// ----------------------------------------------------------------------------
+// PAGE 1: DEVICE HEALTH CARDS
+// ----------------------------------------------------------------------------
+function renderDeviceHealthCards(unoStatus, espStatus) {
+  const uno = state.unoTelemetry;
+  const esp = state.esp32Telemetry;
+
+  // Uno Card
+  if (dom.unoHealthPill) {
+    dom.unoHealthPill.className = `card-pill ${unoStatus === 'CONNECTED' ? 'ok' : (unoStatus === 'STALE' ? 'warning' : 'fault')}`;
+    dom.unoHealthPill.textContent = unoStatus;
+  }
+  if (dom.unoStateDesc) {
+    dom.unoStateDesc.textContent = (unoStatus === 'CONNECTED') ? 'Streaming at 115200 baud' : (unoStatus === 'STALE' ? 'Packet delayed > 5s' : 'Disconnected');
+  }
+  if (dom.unoDistDesc) {
+    if (unoStatus === 'CONNECTED' && uno && uno.dist_cm !== null && uno.dist_cm !== undefined) {
+      dom.unoDistDesc.textContent = `${Number(uno.dist_cm).toFixed(1)} cm (Threshold: ≤ 20.0 cm)`;
+    } else {
+      dom.unoDistDesc.textContent = '— cm';
+    }
+  }
+  if (dom.unoProxDesc) {
+    if (unoStatus === 'CONNECTED' && uno) {
+      dom.unoProxDesc.textContent = uno.prox ? 'Yes (Object Detected)' : 'No';
+      dom.unoProxDesc.style.color = uno.prox ? 'var(--accent-forest)' : 'var(--text-main)';
+    } else {
+      dom.unoProxDesc.textContent = 'No';
+      dom.unoProxDesc.style.color = 'var(--text-main)';
+    }
+  }
+  if (dom.unoLidDesc) {
+    if (unoStatus === 'CONNECTED' && uno && uno.lid_cmd) {
+      dom.unoLidDesc.textContent = `${uno.lid_cmd === 'OPEN' ? '90° (OPEN)' : '0° (CLOSED)'}`;
+    } else {
+      dom.unoLidDesc.textContent = '0° (CLOSED)';
+    }
+  }
+  if (dom.unoLastSeen) {
+    dom.unoLastSeen.textContent = state.lastUnoTimestamp ? new Date(state.lastUnoTimestamp).toLocaleTimeString() : 'Never';
+  }
+
+  // ESP32 Card
+  if (dom.esp32HealthPill) {
+    dom.esp32HealthPill.className = `card-pill ${espStatus === 'CONNECTED' ? 'ok' : (espStatus === 'STALE' ? 'warning' : 'fault')}`;
+    dom.esp32HealthPill.textContent = espStatus;
+  }
+  if (dom.esp32StateDesc) {
+    dom.esp32StateDesc.textContent = (espStatus === 'CONNECTED') ? 'Telemetry active (4 Channels)' : (espStatus === 'STALE' ? 'Packet delayed > 5s' : 'Disconnected');
+  }
+  if (dom.esp32MoistHealth) {
+    if (espStatus === 'CONNECTED' && esp) {
+      const c1Ok = (esp.c1_ok !== undefined) ? esp.c1_ok : esp.moist_ok;
+      const c2Ok = (esp.c2_ok !== undefined) ? esp.c2_ok : true;
+      dom.esp32MoistHealth.textContent = `C1: ${c1Ok ? 'OK' : 'Fault'} • C2: ${c2Ok ? 'OK' : 'Fault'}`;
+    } else {
+      dom.esp32MoistHealth.textContent = 'C1: Offline • C2: Offline';
+    }
+  }
+  if (dom.esp32MassHealth) {
+    if (espStatus === 'CONNECTED' && esp) {
+      const lc1Ok = (esp.lc1_ok !== undefined) ? esp.lc1_ok : esp.weight_ok;
+      const lc2Ok = (esp.lc2_ok !== undefined) ? esp.lc2_ok : true;
+      dom.esp32MassHealth.textContent = `LC1: ${lc1Ok ? 'OK' : 'Fault'} • LC2: ${lc2Ok ? 'OK' : 'Fault'}`;
+    } else {
+      dom.esp32MassHealth.textContent = 'LC1: Offline • LC2: Offline';
+    }
+  }
+  if (dom.esp32CalibSummary) {
+    if (espStatus === 'CONNECTED' && esp) {
+      const isCal = (esp.c1_cal !== false && esp.c2_cal !== false && esp.lc1_cal !== false && esp.lc2_cal !== false);
+      dom.esp32CalibSummary.textContent = isCal ? 'All channels calibrated (NVS)' : 'Calibration check recommended';
+      dom.esp32CalibSummary.style.color = isCal ? 'var(--accent-forest)' : 'var(--accent-amber)';
+    } else {
+      dom.esp32CalibSummary.textContent = 'Awaiting connection';
+      dom.esp32CalibSummary.style.color = 'var(--text-dim)';
+    }
+  }
+  if (dom.esp32LastSeen) {
+    dom.esp32LastSeen.textContent = state.lastEsp32Timestamp ? new Date(state.lastEsp32Timestamp).toLocaleTimeString() : 'Never';
+  }
+}
+
+// ----------------------------------------------------------------------------
+// PAGE 1: THREE COMPARTMENTS CARDS
+// ----------------------------------------------------------------------------
+function renderCompartmentCards(espStatus) {
+  const esp = state.esp32Telemetry;
+  const isOnline = (espStatus === 'CONNECTED' && esp);
+
+  // Compartment A: Biodegradable
+  if (dom.compAStatusPill) {
+    dom.compAStatusPill.className = `card-pill ${isOnline ? 'ok' : 'uncalibrated'}`;
+    dom.compAStatusPill.textContent = isOnline ? 'ACTIVE BIN' : 'AWAITING ESP32';
+  }
+  if (dom.compAMoistVal && dom.compAMoistDesc) {
+    const c1Pct = isOnline ? (esp.c1_pct !== undefined ? esp.c1_pct : esp.moist_pct) : null;
+    if (c1Pct !== null && c1Pct !== undefined && !isNaN(c1Pct)) {
+      dom.compAMoistVal.textContent = Number(c1Pct).toFixed(0);
+      dom.compAMoistDesc.textContent = (c1Pct >= 50) ? 'Moist / Organic range' : 'Dry / Low moisture';
+    } else {
+      dom.compAMoistVal.textContent = '—';
+      dom.compAMoistDesc.textContent = isOnline ? 'Sensor uncalibrated' : 'Awaiting sensor reading';
+    }
+  }
+  if (dom.compAWeightVal && dom.compAWeightDesc) {
+    const lc1G = isOnline ? (esp.lc1_g !== undefined ? esp.lc1_g : esp.weight_g) : null;
+    if (lc1G !== null && lc1G !== undefined && !isNaN(lc1G)) {
+      dom.compAWeightVal.textContent = Number(lc1G).toFixed(0);
+      dom.compAWeightDesc.textContent = `Measured mass (${(Number(lc1G)/1000).toFixed(2)} kg)`;
+    } else {
+      dom.compAWeightVal.textContent = '—';
+      dom.compAWeightDesc.textContent = isOnline ? 'Load cell uncalibrated' : 'Awaiting load cell';
+    }
+  }
+  if (dom.compAHealth) dom.compAHealth.textContent = isOnline ? 'Normal' : 'Offline';
+  if (dom.compACalib) {
+    const c1Cal = isOnline ? (esp.c1_cal !== undefined ? esp.c1_cal : esp.moist_cal) : false;
+    const lc1Cal = isOnline ? (esp.lc1_cal !== undefined ? esp.lc1_cal : esp.weight_cal) : false;
+    dom.compACalib.textContent = (c1Cal && lc1Cal) ? 'Calibrated' : 'Calibration Needed';
+    dom.compACalib.style.color = (c1Cal && lc1Cal) ? 'var(--accent-forest)' : 'var(--accent-amber)';
+  }
+  if (dom.compATrend) {
+    if (state.mlForecastResult && state.mlForecastResult.lc1) {
+      const delta = state.mlForecastResult.lc1.projected_delta_grams || 0;
+      dom.compATrend.textContent = delta > 10 ? `+${delta.toFixed(0)}g expected` : 'Stable mass';
+    } else {
+      dom.compATrend.textContent = 'Awaiting data';
+    }
+  }
+
+  // Compartment B: Non-Biodegradable
+  if (dom.compBStatusPill) {
+    dom.compBStatusPill.className = `card-pill ${isOnline ? 'ok' : 'uncalibrated'}`;
+    dom.compBStatusPill.textContent = isOnline ? 'ACTIVE BIN' : 'AWAITING ESP32';
+  }
+  if (dom.compBMoistVal && dom.compBMoistDesc) {
+    const c2Pct = isOnline ? esp.c2_pct : null;
+    if (c2Pct !== null && c2Pct !== undefined && !isNaN(c2Pct)) {
+      dom.compBMoistVal.textContent = Number(c2Pct).toFixed(0);
+      dom.compBMoistDesc.textContent = (c2Pct < 30) ? 'Dry / Packaging range' : 'Elevated moisture';
+    } else {
+      dom.compBMoistVal.textContent = '—';
+      dom.compBMoistDesc.textContent = isOnline ? 'Sensor uncalibrated' : 'Awaiting sensor reading';
+    }
+  }
+  if (dom.compBWeightVal && dom.compBWeightDesc) {
+    const lc2G = isOnline ? esp.lc2_g : null;
+    if (lc2G !== null && lc2G !== undefined && !isNaN(lc2G)) {
+      dom.compBWeightVal.textContent = Number(lc2G).toFixed(0);
+      dom.compBWeightDesc.textContent = `Measured mass (${(Number(lc2G)/1000).toFixed(2)} kg)`;
+    } else {
+      dom.compBWeightVal.textContent = '—';
+      dom.compBWeightDesc.textContent = isOnline ? 'Load cell uncalibrated' : 'Awaiting load cell';
+    }
+  }
+  if (dom.compBHealth) dom.compBHealth.textContent = isOnline ? 'Normal' : 'Offline';
+  if (dom.compBCalib) {
+    const c2Cal = isOnline ? esp.c2_cal : false;
+    const lc2Cal = isOnline ? esp.lc2_cal : false;
+    dom.compBCalib.textContent = (c2Cal && lc2Cal) ? 'Calibrated' : 'Calibration Needed';
+    dom.compBCalib.style.color = (c2Cal && lc2Cal) ? 'var(--accent-forest)' : 'var(--accent-amber)';
+  }
+  if (dom.compBTrend) {
+    if (state.mlForecastResult && state.mlForecastResult.lc2) {
+      const delta = state.mlForecastResult.lc2.projected_delta_grams || 0;
+      dom.compBTrend.textContent = delta > 10 ? `+${delta.toFixed(0)}g expected` : 'Stable mass';
+    } else {
+      dom.compBTrend.textContent = 'Awaiting data';
+    }
+  }
+
+  // Compartment C: Reserved (Strictly Inactive)
+  if (dom.compCStatusPill) {
+    dom.compCStatusPill.className = 'card-pill neutral';
+    dom.compCStatusPill.textContent = 'NOT CONFIGURED';
+  }
+}
+
+// ----------------------------------------------------------------------------
+// PAGE 1: CHARTS (SVG RENDERING)
+// ----------------------------------------------------------------------------
+function renderCharts() {
+  if (state.activeTab !== 'overview') return;
+  renderSvgChart(dom.chartWeightWrap, 'lc1', 'lc2', 'Mass (g)', '#15803d', '#0f766e');
+  renderSvgChart(dom.chartMoistureWrap, 'c1', 'c2', 'Moisture (%)', '#15803d', '#0f766e');
+}
+
+function renderSvgChart(container, key1, key2, yLabel, color1, color2) {
+  if (!container) return;
+
+  const data = state.historyData;
+  if (!data || data.length < 2) {
+    container.innerHTML = '<span class="chart-empty-text">Awaiting sensor data points...</span>';
     return;
   }
 
-  dom.lidEventsTbody.innerHTML = '';
-  // Reverse to display newest first
-  events.slice().reverse().forEach(ev => {
-    const tr = document.createElement('tr');
-    const timeStr = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : '—';
-    const isOpening = ev.new_state === 'OPEN' || ev.new_state === 'OPENING';
-    const badgeClass = isOpening ? 'open' : 'closed';
+  const width = container.clientWidth || 400;
+  const height = 220;
+  const pad = { top: 20, right: 20, bottom: 30, left: 45 };
+  const plotW = width - pad.left - pad.right;
+  const plotH = height - pad.top - pad.bottom;
 
-    tr.innerHTML = `
-      <td style="font-family: var(--font-mono); font-size: 0.8rem;">${timeStr}</td>
-      <td>${ev.trigger || 'PROXIMITY'}</td>
-      <td style="font-family: var(--font-mono);">${ev.distance_cm ? Number(ev.distance_cm).toFixed(1) + ' cm' : '—'}</td>
-      <td>${ev.previous_state || 'CLOSED'} ➔ <span class="pill-badge ${badgeClass}">${ev.new_state}</span></td>
-      <td>${ev.source === 'SIMULATION' ? 'Simulated Servo Command (D6)' : 'Servo PWM Signal (D6)'}</td>
-    `;
-    dom.lidEventsTbody.appendChild(tr);
+  // Find Min & Max
+  let minVal = Infinity;
+  let maxVal = -Infinity;
+  data.forEach(d => {
+    if (d[key1] !== null) { minVal = Math.min(minVal, d[key1]); maxVal = Math.max(maxVal, d[key1]); }
+    if (d[key2] !== null) { minVal = Math.min(minVal, d[key2]); maxVal = Math.max(maxVal, d[key2]); }
   });
-}
 
-async function fetchLidEvents() {
-  if (state.mode === 'simulation') return; // Do not overwrite simulation event list
-  try {
-    const res = await fetch(`${state.backendUrl}/api/lid/events`);
-    if (!res.ok) return;
-    const events = await res.json();
-    state.lidEvents = events;
-    renderLidEventsList(events);
-  } catch (e) {}
-}
-
-dom.btnRefreshLid.addEventListener('click', () => {
-  if (state.mode === 'simulation') {
-    renderLidEventsList(state.simLidEvents);
-  } else {
-    fetchLidEvents();
-  }
-});
-
-// ============================================================================
-// HISTORICAL SENSOR CHARTS (GENUINE SVG RENDERING)
-// ============================================================================
-async function fetchHistoricalData() {
-  if (state.mode === 'simulation') return; // Do not overwrite simulation chart data
-  try {
-    const res = await fetch(`${state.backendUrl}/api/telemetry/history`);
-    if (!res.ok) return;
-    const history = await res.json();
-    state.historyData = history;
-
-    renderLineChart(dom.chartWeightWrap, history, 'weight_g', 'Weight (g)', '#15803d');
-    renderLineChart(dom.chartMoistureWrap, history, 'moist_pct', 'Moisture (%)', '#0f766e');
-  } catch (e) {}
-}
-
-function renderLineChart(container, records, field, label, strokeColor) {
-  // Filter for records with genuine numerical readings
-  const validPoints = records.filter(r => r && r[field] !== null && typeof r[field] === 'number');
-
-  if (validPoints.length < 2) {
-    container.innerHTML = `<span class="chart-empty-text">No historical ${label.toLowerCase()} records available</span>`;
+  if (minVal === Infinity) {
+    container.innerHTML = '<span class="chart-empty-text">No valid numerical points to plot</span>';
     return;
   }
 
-  const width = container.clientWidth || 450;
-  const height = 200;
-  const padding = 35;
+  if (minVal === maxVal) { minVal -= 5; maxVal += 5; }
+  minVal = Math.max(0, minVal);
 
-  const values = validPoints.map(p => p[field]);
-  const minVal = Math.min(...values);
-  const maxVal = Math.max(...values);
-  const range = (maxVal - minVal) === 0 ? 1 : (maxVal - minVal);
+  const scaleX = (i) => pad.left + (i / (data.length - 1)) * plotW;
+  const scaleY = (v) => pad.top + plotH - ((v - minVal) / (maxVal - minVal)) * plotH;
 
-  const pointsStr = validPoints.map((p, idx) => {
-    const x = padding + (idx / (validPoints.length - 1)) * (width - 2 * padding);
-    const y = (height - padding) - ((p[field] - minVal) / range) * (height - 2 * padding);
-    return `${x.toFixed(1)},${y.toFixed(1)}`;
-  }).join(' ');
+  // Build Paths with gap handling (avoid drawing lines across nulls)
+  function buildPath(key) {
+    let path = '';
+    let inSegment = false;
+    data.forEach((d, i) => {
+      const val = d[key];
+      if (val !== null && !isNaN(val)) {
+        const x = scaleX(i);
+        const y = scaleY(val);
+        if (!inSegment) {
+          path += `M ${x.toFixed(1)} ${y.toFixed(1)} `;
+          inSegment = true;
+        } else {
+          path += `L ${x.toFixed(1)} ${y.toFixed(1)} `;
+        }
+      } else {
+        inSegment = false;
+      }
+    });
+    return path;
+  }
 
-  container.innerHTML = `
-    <svg width="100%" height="100%" viewBox="0 0 ${width} ${height}" style="overflow: visible;">
-      <!-- Grid lines -->
-      <line x1="${padding}" y1="${padding}" x2="${width - padding}" y2="${padding}" stroke="#e2e8f0" stroke-dasharray="3,3" />
-      <line x1="${padding}" y1="${height - padding}" x2="${width - padding}" y2="${height - padding}" stroke="#e2e8f0" />
+  const path1 = buildPath(key1);
+  const path2 = buildPath(key2);
+
+  // Gridlines & Labels
+  const svg = `
+    <svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" style="display:block; overflow:visible;">
+      <!-- Gridlines -->
+      <line x1="${pad.left}" y1="${pad.top}" x2="${width - pad.right}" y2="${pad.top}" stroke="#e2e8f0" stroke-dasharray="3 3"/>
+      <line x1="${pad.left}" y1="${pad.top + plotH/2}" x2="${width - pad.right}" y2="${pad.top + plotH/2}" stroke="#e2e8f0" stroke-dasharray="3 3"/>
+      <line x1="${pad.left}" y1="${pad.top + plotH}" x2="${width - pad.right}" y2="${pad.top + plotH}" stroke="#cbd5e1" stroke-width="1"/>
       
-      <!-- Axis Labels -->
-      <text x="${padding}" y="${padding - 8}" font-size="10" fill="#94a3b8" font-family="var(--font-mono)">${maxVal.toFixed(1)}</text>
-      <text x="${padding}" y="${height - padding + 15}" font-size="10" fill="#94a3b8" font-family="var(--font-mono)">${minVal.toFixed(1)}</text>
-      <text x="${width - padding}" y="${height - padding + 15}" font-size="10" fill="#94a3b8" text-anchor="end" font-family="var(--font-mono)">${validPoints.length} Samples</text>
+      <!-- Y-Axis Labels -->
+      <text x="${pad.left - 8}" y="${pad.top + 4}" fill="#94a3b8" font-size="10" font-family="monospace" text-anchor="end">${maxVal.toFixed(0)}</text>
+      <text x="${pad.left - 8}" y="${pad.top + plotH/2 + 4}" fill="#94a3b8" font-size="10" font-family="monospace" text-anchor="end">${((maxVal + minVal)/2).toFixed(0)}</text>
+      <text x="${pad.left - 8}" y="${pad.top + plotH + 4}" fill="#94a3b8" font-size="10" font-family="monospace" text-anchor="end">${minVal.toFixed(0)}</text>
 
-      <!-- Polyline -->
-      <polyline fill="none" stroke="${strokeColor}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" points="${pointsStr}" />
+      <!-- Data Traces -->
+      ${path1 ? `<path d="${path1}" fill="none" stroke="${color1}" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>` : ''}
+      ${path2 ? `<path d="${path2}" fill="none" stroke="${color2}" stroke-width="2.5" stroke-dasharray="4 2" stroke-linejoin="round" stroke-linecap="round"/>` : ''}
     </svg>
   `;
+  container.innerHTML = svg;
 }
 
-// ============================================================================
-// DIRECT WEB SERIAL API (BROWSER USB TO ARDUINO UNO)
-// ============================================================================
-async function initDirectWebSerial() {
-  if (!('serial' in navigator)) {
-    alert('Web Serial API is not supported in this browser. Please use Google Chrome, Microsoft Edge, or Opera.');
-    return;
+// ----------------------------------------------------------------------------
+// PAGE 1: ALERTS & ML INSIGHTS
+// ----------------------------------------------------------------------------
+function renderAlertsAndMLInsights(unoStatus, espStatus) {
+  const alerts = [];
+  const esp = state.esp32Telemetry;
+
+  if (unoStatus !== 'CONNECTED') {
+    alerts.push({ type: 'warning', text: 'Arduino Uno is offline. Automatic lid servo status is unavailable.' });
+  }
+  if (espStatus !== 'CONNECTED') {
+    alerts.push({ type: 'warning', text: 'ESP32 sensor hub is offline. Bin mass & moisture telemetry may be outdated.' });
+  } else if (esp) {
+    if (esp.c1_cal === false) alerts.push({ type: 'info', text: 'Moisture sensor C1 needs calibration in dry air & water.' });
+    if (esp.c2_cal === false) alerts.push({ type: 'info', text: 'Moisture sensor C2 needs calibration in dry air & water.' });
+    if (esp.lc1_cal === false) alerts.push({ type: 'info', text: 'Load Cell 1 requires reference mass calibration.' });
+    if (esp.lc2_cal === false) alerts.push({ type: 'info', text: 'Load Cell 2 requires reference mass calibration.' });
   }
 
-  try {
-    const port = await navigator.serial.requestPort();
-    await port.open({ baudRate: 115200 });
-    state.webSerialPort = port;
-    state.isSerialConnected = true;
-
-    dom.btnWebSerialText.textContent = 'Disconnect USB';
-    dom.btnWebSerial.classList.add('primary');
-    logTerminal('✓ Opened direct USB connection to Arduino Uno (115200 baud)', 'in');
-
-    readSerialStream(port);
-  } catch (err) {
-    logTerminal(`Web Serial connection cancelled or failed: ${err.message}`, 'err');
-  }
-}
-
-async function readSerialStream(port) {
-  const textDecoder = new TextDecoderStream();
-  port.readable.pipeTo(textDecoder.writable);
-  const reader = textDecoder.readable.getReader();
-
-  let lineBuffer = '';
-
-  try {
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-
-      lineBuffer += value;
-      const lines = lineBuffer.split('\n');
-      lineBuffer = lines.pop(); // Keep uncompleted fragment
-
-      for (const rawLine of lines) {
-        const trimmed = rawLine.trim();
-        if (!trimmed) continue;
-
-        if (trimmed.startsWith('{') && trimmed.endsWith('}')) {
-          try {
-            const parsed = JSON.parse(trimmed);
-            if (state.mode === 'hardware') {
-              processTelemetryPacket(parsed, 'USB Serial');
-            }
-            // Forward genuine hardware telemetry to backend
-            forwardTelemetryToBackend(trimmed);
-          } catch (jsonErr) {
-            logTerminal(`Malformed JSON Line: ${trimmed}`, 'err');
-          }
-        } else {
-          logTerminal(`[UNO] ${trimmed}`, 'dim');
-        }
-      }
-    }
-  } catch (err) {
-    logTerminal(`Serial read loop error: ${err.message}`, 'err');
-  } finally {
-    reader.releaseLock();
-  }
-}
-
-async function forwardTelemetryToBackend(rawJson) {
-  try {
-    await fetch(`${state.backendUrl}/api/telemetry`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: rawJson
-    });
-  } catch (e) {
-    // Backend offline is non-fatal when running direct WebSerial
-  }
-}
-
-// ============================================================================
-// ACTUATOR COMMANDS (TARE / OPEN / CLOSE) WITH SIMULATION SAFETY
-// ============================================================================
-async function sendSerialCommand(cmdChar) {
-  // CRITICAL REQUIREMENT: Simulation Mode must NEVER operate physical actuators!
-  if (state.mode === 'simulation') {
-    logTerminal(`[SIMULATION] Hardware command '${cmdChar}' intercepted. Physical serial is disabled in Simulation Mode.`, 'warn');
-    if (cmdChar === 't') {
-      simulationEngine.weightG = 0.0;
-      simulationEngine.binFillMass = 0.0;
-      logTerminal(`[SIMULATION] Simulated scale tared to 0.0g.`, 'in');
-    } else if (cmdChar === 'o') {
-      simulationEngine.forceOpen();
-      logTerminal(`[SIMULATION] Simulated lid forced OPEN (90°).`, 'in');
-    } else if (cmdChar === 'x') {
-      simulationEngine.forceClose();
-      logTerminal(`[SIMULATION] Simulated lid forced CLOSED (0°).`, 'in');
-    }
-    return;
+  if (alerts.length === 0) {
+    alerts.push({ type: 'info', text: 'System running nominal. Real-time telemetry synchronized across microcontrollers.' });
   }
 
-  logTerminal(`Sending command '${cmdChar}' to Arduino Uno...`, 'out');
+  if (dom.overviewAlertsList) {
+    dom.overviewAlertsList.innerHTML = alerts.map(a => `
+      <div class="alert-row ${a.type}">
+        <span>${a.type === 'fault' ? '⚠' : (a.type === 'warning' ? '⚡' : 'ℹ')}</span>
+        <span>${a.text}</span>
+      </div>
+    `).join('');
+  }
 
-  // Option 1: Direct Web Serial
-  if (state.webSerialPort && state.webSerialPort.writable) {
-    try {
-      const writer = state.webSerialPort.writable.getWriter();
-      const encoder = new TextEncoder();
-      await writer.write(encoder.encode(cmdChar + '\n'));
-      writer.releaseLock();
-      logTerminal(`✓ Sent command '${cmdChar}' directly over USB.`, 'in');
-      return;
-    } catch (e) {
-      logTerminal(`Direct USB command failed: ${e.message}`, 'err');
+  if (dom.overviewAlertsPill) {
+    const hasFault = alerts.some(a => a.type === 'fault');
+    const hasWarn = alerts.some(a => a.type === 'warning');
+    dom.overviewAlertsPill.className = `card-pill ${hasFault ? 'fault' : (hasWarn ? 'warning' : 'ok')}`;
+    dom.overviewAlertsPill.textContent = hasFault ? 'FAULT' : (hasWarn ? 'ATTENTION' : 'NORMAL');
+  }
+
+  // ML Plain Summary
+  if (dom.mlPlainSummary) {
+    if (state.mlAnomalyResult && state.mlAnomalyResult.status === 'suspected_anomaly') {
+      dom.mlPlainSummary.textContent = `Sensor readings look unusual (${state.mlAnomalyResult.reasons?.join(', ') || 'anomalous reading'}). Check hardware connections.`;
+      if (dom.mlInsightPill) { dom.mlInsightPill.textContent = 'ANOMALY DETECTED'; dom.mlInsightPill.className = 'badge-pill sim-badge'; }
+    } else if (state.mlForecastResult && state.mlForecastResult.plain_english_summary) {
+      dom.mlPlainSummary.textContent = state.mlForecastResult.plain_english_summary;
+      if (dom.mlInsightPill) { dom.mlInsightPill.textContent = 'ML ACTIVE'; dom.mlInsightPill.className = 'badge-pill ml-badge'; }
+    } else {
+      dom.mlPlainSummary.textContent = 'Sensors stable. Telemetry trends within normal operating thresholds.';
+      if (dom.mlInsightPill) { dom.mlInsightPill.textContent = 'ML READY'; dom.mlInsightPill.className = 'badge-pill ml-badge'; }
     }
   }
 
-  // Option 2: Forward through Backend API
-  try {
-    const res = await fetch(`${state.backendUrl}/api/command`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ command: cmdChar })
-    });
-    if (res.ok) {
-      logTerminal(`✓ Queued command '${cmdChar}' via Backend.`, 'in');
-    }
-  } catch (err) {
-    logTerminal(`Command dispatch failed: ${err.message}`, 'err');
+  if (dom.mlInsightProvenance) {
+    dom.mlInsightProvenance.textContent = (state.mode === 'simulation')
+      ? 'PROVENANCE: SYNTHETIC MODEL TEST — NOT REAL-WORLD VALIDATION'
+      : 'PROVENANCE: HARDWARE TELEMETRY STREAM';
   }
 }
 
-// Attach Event Listeners
-dom.btnWebSerial.addEventListener('click', () => {
-  if (state.isSerialConnected && state.webSerialPort) {
-    state.webSerialPort.close();
-    state.isSerialConnected = false;
-    dom.btnWebSerialText.textContent = 'Direct USB (Web Serial)';
-    dom.btnWebSerial.classList.remove('primary');
-    logTerminal('Closed USB connection.', 'dim');
-  } else {
-    initDirectWebSerial();
-  }
-});
-
-dom.cmdTare.addEventListener('click', () => sendSerialCommand('t'));
-dom.cmdOpen.addEventListener('click', () => sendSerialCommand('o'));
-dom.cmdClose.addEventListener('click', () => sendSerialCommand('x'));
-dom.cmdClear.addEventListener('click', () => { dom.terminalStream.innerHTML = ''; });
-
-// ============================================================================
-// SENSOR MACHINE LEARNING ANALYTICS INTEGRATION
-// ============================================================================
-async function requestMlInference(packet) {
-  if (!packet) return;
-
+// ----------------------------------------------------------------------------
+// PAGE 2: TECHNICAL OPERATIONS
+// ----------------------------------------------------------------------------
+function renderTechnicalOperations(unoStatus, espStatus) {
+  const uno = state.unoTelemetry;
+  const esp = state.esp32Telemetry;
   const now = Date.now();
-  if (now - state.lastMlInferenceTime < 800) {
-    return; // Throttle requests to avoid overwhelming the inference service
+
+  // Panel A: Uno Details
+  if (dom.opUnoPill) {
+    dom.opUnoPill.className = `card-pill ${unoStatus === 'CONNECTED' ? 'ok' : 'uncalibrated'}`;
+    dom.opUnoPill.textContent = unoStatus;
   }
-  state.lastMlInferenceTime = now;
-
-  const isSim = (packet.source === 'simulation' || state.mode === 'simulation');
-  if (dom.mlAnomalyProvenance) {
-    dom.mlAnomalyProvenance.textContent = isSim ? 'SIMULATION' : 'HARDWARE';
-    dom.mlAnomalyProvenance.style.color = isSim ? 'var(--accent-teal)' : 'var(--accent-forest)';
+  if (dom.opUnoDev) dom.opUnoDev.textContent = uno?.dev || 'UNO-WS01';
+  if (dom.opUnoElapsed) {
+    const el = state.lastUnoTimestamp ? ((now - state.lastUnoTimestamp) / 1000).toFixed(1) : '—';
+    dom.opUnoElapsed.textContent = `${el}s ago`;
+  }
+  if (dom.opUnoSeqUp) {
+    dom.opUnoSeqUp.textContent = `Seq: ${uno?.seq || 0} • Uptime: ${uno?.up || 0}s`;
+  }
+  if (dom.opUnoDistProx) {
+    dom.opUnoDistProx.textContent = `${uno?.dist_cm !== null && uno?.dist_cm !== undefined ? Number(uno.dist_cm).toFixed(1) + ' cm' : '—'} (Prox: ${uno?.prox ? 'YES' : 'NO'})`;
+  }
+  if (dom.opUnoLidCmd) {
+    dom.opUnoLidCmd.textContent = `${uno?.lid_cmd || 'CLOSED'}`;
+  }
+  if (dom.opUnoFaults) {
+    dom.opUnoFaults.textContent = (uno?.faults && uno.faults.length > 0) ? uno.faults.join(', ') : 'None';
+  }
+  if (dom.opUnoRawPacket) {
+    dom.opUnoRawPacket.textContent = uno ? JSON.stringify(uno, null, 2) : 'Waiting for incoming packet...';
   }
 
-  // Dual-target resilience: backend proxy (port 8080) or direct to FastAPI (port 8000)
-  const baseUrl = state.backendUrl || window.location.origin;
-  const mlDirectUrl = 'http://127.0.0.1:8000';
+  // Panel A: ESP32 Details
+  if (dom.opEspPill) {
+    dom.opEspPill.className = `card-pill ${espStatus === 'CONNECTED' ? 'ok' : 'uncalibrated'}`;
+    dom.opEspPill.textContent = espStatus;
+  }
+  if (dom.opEspDev) dom.opEspDev.textContent = esp?.dev || 'ESP32-WS01';
+  if (dom.opEspElapsed) {
+    const el = state.lastEsp32Timestamp ? ((now - state.lastEsp32Timestamp) / 1000).toFixed(1) : '—';
+    dom.opEspElapsed.textContent = `${el}s ago`;
+  }
+  if (dom.opEspSeqUp) {
+    dom.opEspSeqUp.textContent = `Seq: ${esp?.seq || 0} • Uptime: ${esp?.up || 0}s`;
+  }
+  if (dom.opEspChansStatus) {
+    dom.opEspChansStatus.textContent = `C1: ${esp?.c1_ok !== false ? 'OK' : 'Fault'} • C2: ${esp?.c2_ok !== false ? 'OK' : 'Fault'} • LC1: ${esp?.lc1_ok !== false ? 'OK' : 'Fault'} • LC2: ${esp?.lc2_ok !== false ? 'OK' : 'Fault'}`;
+  }
+  if (dom.opEspLidSync) {
+    dom.opEspLidSync.textContent = `${esp?.lid_sync_state || (uno?.lid_cmd || 'CLOSED')} (${esp?.lid_sync_fresh !== false ? 'Synchronized' : 'Stale'})`;
+  }
+  if (dom.opEspRawPacket) {
+    dom.opEspRawPacket.textContent = esp ? JSON.stringify(esp, null, 2) : 'Waiting for incoming packet...';
+  }
 
-  const fetchWithFallback = async (endpoint, options) => {
-    try {
-      const res = await fetch(`${baseUrl}${endpoint}`, options);
-      if (res.ok) return await res.json();
-    } catch (e) {}
-    try {
-      const res2 = await fetch(`${mlDirectUrl}${endpoint}`, options);
-      if (res2.ok) return await res2.json();
-    } catch (e2) {}
-    return null;
+  // Panel B: 4 Channels Diagnostics
+  renderSensorChannelDiagnostics(esp);
+
+  // Panel C: Lid Diagnostics
+  if (dom.opLidStatePill) {
+    dom.opLidStatePill.className = `card-pill ${uno?.lid_cmd === 'OPEN' ? 'ok' : 'neutral'}`;
+    dom.opLidStatePill.textContent = uno?.lid_cmd || 'CLOSED';
+  }
+  if (dom.opLidAngle) {
+    dom.opLidAngle.textContent = uno?.lid_cmd === 'OPEN' ? '90° (OPEN)' : '0° (CLOSED)';
+  }
+  if (dom.opSyncStatusPill) {
+    const isCoordinated = (espStatus === 'CONNECTED' && unoStatus === 'CONNECTED');
+    dom.opSyncStatusPill.className = `card-pill ${isCoordinated ? 'ok' : 'uncalibrated'}`;
+    dom.opSyncStatusPill.textContent = isCoordinated ? 'COORDINATED' : 'LINK PARTIAL';
+  }
+  if (dom.opSyncUnoState) dom.opSyncUnoState.textContent = uno?.lid_cmd || 'CLOSED';
+  if (dom.opSyncEspState) dom.opSyncEspState.textContent = esp?.lid_sync_state || (uno?.lid_cmd || 'CLOSED');
+
+  // Panel F: ML Diagnostics
+  renderMLDiagnostics();
+}
+
+function renderSensorChannelDiagnostics(esp) {
+  // C1
+  if (dom.c1Pill) {
+    const isCal = esp && esp.c1_cal !== false;
+    dom.c1Pill.className = `card-pill ${isCal ? 'ok' : 'uncalibrated'}`;
+    dom.c1Pill.textContent = isCal ? 'CALIBRATED' : 'UNCALIBRATED';
+  }
+  if (dom.c1PctVal) dom.c1PctVal.textContent = (esp && esp.c1_pct !== null && esp.c1_pct !== undefined) ? Number(esp.c1_pct).toFixed(1) : '—';
+  if (dom.c1RawVal) dom.c1RawVal.textContent = (esp && esp.c1_raw !== null && esp.c1_raw !== undefined) ? `${esp.c1_raw} ADC` : '—';
+  if (dom.c1HealthText) dom.c1HealthText.textContent = (esp && esp.c1_ok !== false) ? 'Healthy' : 'Disconnected / Noise';
+
+  // C2
+  if (dom.c2Pill) {
+    const isCal = esp && esp.c2_cal !== false;
+    dom.c2Pill.className = `card-pill ${isCal ? 'ok' : 'uncalibrated'}`;
+    dom.c2Pill.textContent = isCal ? 'CALIBRATED' : 'UNCALIBRATED';
+  }
+  if (dom.c2PctVal) dom.c2PctVal.textContent = (esp && esp.c2_pct !== null && esp.c2_pct !== undefined) ? Number(esp.c2_pct).toFixed(1) : '—';
+  if (dom.c2RawVal) dom.c2RawVal.textContent = (esp && esp.c2_raw !== null && esp.c2_raw !== undefined) ? `${esp.c2_raw} ADC` : '—';
+  if (dom.c2HealthText) dom.c2HealthText.textContent = (esp && esp.c2_ok !== false) ? 'Healthy' : 'Disconnected / Noise';
+
+  // LC1
+  if (dom.lc1Pill) {
+    const isCal = esp && esp.lc1_cal !== false;
+    dom.lc1Pill.className = `card-pill ${isCal ? 'ok' : 'uncalibrated'}`;
+    dom.lc1Pill.textContent = isCal ? 'CALIBRATED' : 'UNCALIBRATED';
+  }
+  if (dom.lc1GVal) dom.lc1GVal.textContent = (esp && esp.lc1_g !== null && esp.lc1_g !== undefined) ? Number(esp.lc1_g).toFixed(1) : '—';
+  if (dom.lc1RawVal) dom.lc1RawVal.textContent = (esp && esp.lc1_raw !== null && esp.lc1_raw !== undefined) ? `${esp.lc1_raw} counts` : '—';
+  if (dom.lc1FactorVal) dom.lc1FactorVal.textContent = (esp && esp.lc1_factor) ? `${Number(esp.lc1_factor).toFixed(2)} counts/g` : '420.0 counts/g (Default)';
+  if (dom.lc1TareVal) dom.lc1TareVal.textContent = (esp && esp.lc1_tare !== undefined) ? `${esp.lc1_tare}` : 'Auto-tared';
+  if (dom.lc1HealthText) dom.lc1HealthText.textContent = (esp && esp.lc1_ok !== false) ? 'Healthy' : 'HX711 Timeout';
+
+  // LC2
+  if (dom.lc2Pill) {
+    const isCal = esp && esp.lc2_cal !== false;
+    dom.lc2Pill.className = `card-pill ${isCal ? 'ok' : 'uncalibrated'}`;
+    dom.lc2Pill.textContent = isCal ? 'CALIBRATED' : 'UNCALIBRATED';
+  }
+  if (dom.lc2GVal) dom.lc2GVal.textContent = (esp && esp.lc2_g !== null && esp.lc2_g !== undefined) ? Number(esp.lc2_g).toFixed(1) : '—';
+  if (dom.lc2RawVal) dom.lc2RawVal.textContent = (esp && esp.lc2_raw !== null && esp.lc2_raw !== undefined) ? `${esp.lc2_raw} counts` : '—';
+  if (dom.lc2FactorVal) dom.lc2FactorVal.textContent = (esp && esp.lc2_factor) ? `${Number(esp.lc2_factor).toFixed(2)} counts/g` : '420.0 counts/g (Default)';
+  if (dom.lc2TareVal) dom.lc2TareVal.textContent = (esp && esp.lc2_tare !== undefined) ? `${esp.lc2_tare}` : 'Auto-tared';
+  if (dom.lc2HealthText) dom.lc2HealthText.textContent = (esp && esp.lc2_ok !== false) ? 'Healthy' : 'HX711 Timeout';
+}
+
+function renderMLDiagnostics() {
+  if (dom.opMlAnomScore && state.mlAnomalyResult) {
+    dom.opMlAnomScore.textContent = `${(state.mlAnomalyResult.anomaly_score * 100).toFixed(1)}%`;
+    dom.opMlAnomReasons.textContent = state.mlAnomalyResult.reasons?.join(', ') || 'No anomalous channels detected';
+    dom.opMlAnomPill.textContent = state.mlAnomalyResult.status?.toUpperCase() || 'NORMAL';
+    dom.opMlAnomPill.className = `card-pill ${state.mlAnomalyResult.status === 'suspected_anomaly' ? 'fault' : 'ok'}`;
+  }
+
+  if (dom.opMlFcVal && state.mlForecastResult) {
+    const lc1G = state.mlForecastResult.lc1?.forecast_grams || 0;
+    const lc2G = state.mlForecastResult.lc2?.forecast_grams || 0;
+    dom.opMlFcVal.textContent = (lc1G + lc2G).toFixed(0);
+    dom.opMlFcSubtext.textContent = `LC1 (+5m): ${lc1G.toFixed(0)}g • LC2 (+5m): ${lc2G.toFixed(0)}g`;
+  }
+}
+
+// ============================================================================
+// TARGETED COMMAND CONSOLE & CALIBRATION CONTROLS
+// ============================================================================
+function initCommandControls() {
+  // Uno Commands
+  if (dom.btnCmdOpen) {
+    dom.btnCmdOpen.addEventListener('click', () => sendUnoCommand('open'));
+  }
+  if (dom.btnCmdClose) {
+    dom.btnCmdClose.addEventListener('click', () => sendUnoCommand('close'));
+  }
+  if (dom.btnCmdUnoStatus) {
+    dom.btnCmdUnoStatus.addEventListener('click', () => sendUnoCommand('status'));
+  }
+
+  // ESP32 Calibration Commands
+  if (dom.btnTareLc1) {
+    dom.btnTareLc1.addEventListener('click', () => sendEsp32Command({ cmd: 'tare', channel: 'lc1' }));
+  }
+  if (dom.btnCalLc1) {
+    dom.btnCalLc1.addEventListener('click', () => {
+      const refG = parseFloat(dom.inputRefLc1?.value || '500');
+      sendEsp32Command({ cmd: 'cal_weight', channel: 'lc1', ref_g: refG });
+    });
+  }
+  if (dom.btnTareLc2) {
+    dom.btnTareLc2.addEventListener('click', () => sendEsp32Command({ cmd: 'tare', channel: 'lc2' }));
+  }
+  if (dom.btnCalLc2) {
+    dom.btnCalLc2.addEventListener('click', () => {
+      const refG = parseFloat(dom.inputRefLc2?.value || '500');
+      sendEsp32Command({ cmd: 'cal_weight', channel: 'lc2', ref_g: refG });
+    });
+  }
+  if (dom.btnCalC1Dry) {
+    dom.btnCalC1Dry.addEventListener('click', () => sendEsp32Command({ cmd: 'cal_moist_dry', channel: 'c1' }));
+  }
+  if (dom.btnCalC1Wet) {
+    dom.btnCalC1Wet.addEventListener('click', () => sendEsp32Command({ cmd: 'cal_moist_wet', channel: 'c1' }));
+  }
+  if (dom.btnCalC2Dry) {
+    dom.btnCalC2Dry.addEventListener('click', () => sendEsp32Command({ cmd: 'cal_moist_dry', channel: 'c2' }));
+  }
+  if (dom.btnCalC2Wet) {
+    dom.btnCalC2Wet.addEventListener('click', () => sendEsp32Command({ cmd: 'cal_moist_wet', channel: 'c2' }));
+  }
+
+  if (dom.cmdClear) {
+    dom.cmdClear.addEventListener('click', () => {
+      if (dom.terminalStream) dom.terminalStream.innerHTML = '';
+    });
+  }
+
+  // Refresh Lid Events
+  if (dom.btnRefreshLidOverview) {
+    dom.btnRefreshLidOverview.addEventListener('click', fetchLidEvents);
+  }
+}
+
+async function sendUnoCommand(action) {
+  if (state.mode === 'simulation') {
+    logTerminal('Actuator commands blocked in Simulation Mode', 'warn');
+    return;
+  }
+
+  if (dom.unoCmdStatus) dom.unoCmdStatus.textContent = `Status: Sending ${action}...`;
+
+  try {
+    const res = await fetch(`${state.backendUrl}/api/cmd/uno`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cmd: action, timestamp: Date.now() })
+    });
+    const data = await res.json();
+    if (data.success) {
+      if (dom.unoCmdStatus) dom.unoCmdStatus.textContent = `Status: Command '${action}' ACCEPTED by Uno queue`;
+      logTerminal(`Uno command '${action}' dispatched successfully`, 'success');
+    } else {
+      if (dom.unoCmdStatus) dom.unoCmdStatus.textContent = `Status: Failed — ${data.error || 'Server error'}`;
+      logTerminal(`Uno command error: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    if (dom.unoCmdStatus) dom.unoCmdStatus.textContent = `Status: Network error`;
+    logTerminal(`Uno command fetch failed: ${err.message}`, 'error');
+  }
+}
+
+async function sendEsp32Command(cmdObj) {
+  if (state.mode === 'simulation') {
+    logTerminal('Calibration commands blocked in Simulation Mode', 'warn');
+    return;
+  }
+
+  if (dom.esp32CmdStatus) dom.esp32CmdStatus.textContent = `Status: Dispatching ${cmdObj.cmd} (${cmdObj.channel || ''})...`;
+
+  try {
+    const res = await fetch(`${state.backendUrl}/api/cmd/esp32`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cmdObj)
+    });
+    const data = await res.json();
+    if (data.success) {
+      if (dom.esp32CmdStatus) dom.esp32CmdStatus.textContent = `Status: ${cmdObj.cmd} ACCEPTED and queued for ESP32`;
+      logTerminal(`ESP32 command dispatched: ${JSON.stringify(cmdObj)}`, 'success');
+    } else {
+      if (dom.esp32CmdStatus) dom.esp32CmdStatus.textContent = `Status: Error — ${data.error}`;
+      logTerminal(`ESP32 command error: ${data.error}`, 'error');
+    }
+  } catch (err) {
+    if (dom.esp32CmdStatus) dom.esp32CmdStatus.textContent = `Status: Network failed`;
+    logTerminal(`ESP32 command failed: ${err.message}`, 'error');
+  }
+}
+
+// ============================================================================
+// LID EVENTS LOGGING
+// ============================================================================
+async function fetchLidEvents() {
+  if (!state.isBackendConnected) return;
+  try {
+    const res = await fetch(`${state.backendUrl}/api/lid/events?limit=8`);
+    if (res.ok) {
+      const events = await res.json();
+      state.lidEvents = events;
+      renderLidEventsTable(events);
+    }
+  } catch (e) {
+    // Silently continue
+  }
+}
+
+function renderLidEventsTable(events) {
+  if (!dom.overviewLidEventsTbody) return;
+  if (!events || events.length === 0) {
+    dom.overviewLidEventsTbody.innerHTML = `
+      <tr>
+        <td colspan="5" class="empty-state-notice">
+          No lid proximity events recorded yet. Connect sensor hardware to monitor proximity detections.
+        </td>
+      </tr>
+    `;
+    return;
+  }
+
+  dom.overviewLidEventsTbody.innerHTML = events.slice(0, 6).map(ev => {
+    const timeStr = ev.timestamp ? new Date(ev.timestamp).toLocaleTimeString() : 'Recent';
+    const distStr = ev.distance_cm ? `${Number(ev.distance_cm).toFixed(1)} cm` : '≤ 20.0 cm';
+    return `
+      <tr>
+        <td>${timeStr}</td>
+        <td><span class="card-pill ok">${ev.trigger || 'PROXIMITY'}</span></td>
+        <td>${distStr}</td>
+        <td>${ev.previous_state || 'CLOSED'} → <strong>${ev.new_state || 'OPEN'}</strong></td>
+        <td>Servo 0° ↔ 90° Transition</td>
+      </tr>
+    `;
+  }).join('');
+}
+
+// ============================================================================
+// SYNTHETIC SIMULATION GENERATOR (INDEPENDENT DUAL-MCU STREAMS)
+// ============================================================================
+const simulationEngine = {
+  start: () => startSyntheticSimulation(),
+  stop: () => stopSyntheticSimulation(),
+  tick: () => generateSyntheticTick()
+};
+
+function startSyntheticSimulation() {
+  if (state.simIntervalId) clearInterval(state.simIntervalId);
+
+  state.simSessionId = 'SIM-SESS-' + Date.now();
+  state.simStartedAt = new Date().toISOString();
+  state.simIsPaused = false;
+
+  state.simIntervalId = setInterval(() => {
+    if (state.simIsPaused) return;
+    generateSyntheticTick();
+  }, state.simIntervalMs);
+}
+
+function stopSyntheticSimulation() {
+  if (state.simIntervalId) {
+    clearInterval(state.simIntervalId);
+    state.simIntervalId = null;
+  }
+}
+
+function generateSyntheticTick() {
+  state.simSeqUno++;
+  state.simSeqEsp++;
+
+  // Apply scenario physics
+  const scenario = state.simScenario;
+
+  if (scenario === 'SCENARIO_B') {
+    // Bin 1 Accumulation (Biodegradable)
+    state.simLc1Weight = Math.min(6500.0, state.simLc1Weight + (Math.random() * 25.0 + 5.0));
+    state.simC1Moist = Math.min(85.0, state.simC1Moist + (Math.random() * 0.8));
+  } else if (scenario === 'SCENARIO_C') {
+    // Bin 2 Accumulation (Non-Biodegradable)
+    state.simLc2Weight = Math.min(7200.0, state.simLc2Weight + (Math.random() * 20.0 + 5.0));
+    state.simC2Moist = Math.max(8.0, state.simC2Moist - (Math.random() * 0.4));
+  }
+
+  // Module A: Uno Packet
+  const isProx = (Math.random() > 0.85);
+  const unoPacket = {
+    v: 1,
+    dev: 'UNO-WS01',
+    seq: state.simSeqUno,
+    up: Math.floor((Date.now() - (state.lastUnoTimestamp || Date.now())) / 1000),
+    dist_cm: isProx ? (Math.random() * 8.0 + 5.0) : (Math.random() * 30.0 + 35.0),
+    prox: isProx,
+    lid_cmd: isProx ? 'OPEN' : 'CLOSED',
+    faults: (state.simFaultActive && Math.random() > 0.5) ? ['ULTRASONIC_TIMEOUT'] : [],
+    source: "simulation"
   };
 
-  try {
-    const [anomalyData, forecastData] = await Promise.all([
-      fetchWithFallback('/api/ml/anomaly', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(packet)
-      }),
-      fetchWithFallback(`/api/ml/forecast?horizon=${state.selectedHorizon}`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(packet)
-      })
-    ]);
+  // Module B: ESP32 Packet (4 Channels, 12-Bit ADC)
+  const c1Raw = Math.round(3200 - (state.simC1Moist / 100.0) * (3200 - 1400) + (Math.random() * 40 - 20));
+  const c2Raw = Math.round(3200 - (state.simC2Moist / 100.0) * (3200 - 1400) + (Math.random() * 40 - 20));
+  const lc1Raw = Math.round(100000 + state.simLc1Weight * 420.0 + (Math.random() * 100 - 50));
+  const lc2Raw = Math.round(100000 + state.simLc2Weight * 420.0 + (Math.random() * 100 - 50));
 
-    // Update Anomaly Detection Card
-    if (anomalyData && anomalyData.status !== 'model_unavailable') {
-      state.mlServiceOnline = true;
-      if (dom.mlServicePill) {
-        dom.mlServicePill.className = 'card-pill ok';
-        dom.mlServicePill.textContent = 'MODELS ACTIVE';
-      }
-      if (dom.mlServiceStatusText) {
-        dom.mlServiceStatusText.textContent = 'Online (FastAPI / Port 8000)';
-      }
+  const esp32Packet = {
+    v: 1,
+    dev: 'ESP32-WS01',
+    seq: state.simSeqEsp,
+    up: Math.floor((Date.now() - (state.lastEsp32Timestamp || Date.now())) / 1000),
+    c1_raw: c1Raw,
+    c1_pct: state.simC1Moist,
+    c1_ok: !(state.simFaultActive && Math.random() > 0.6),
+    c1_cal: scenario !== 'SCENARIO_F',
+    c2_raw: c2Raw,
+    c2_pct: state.simC2Moist,
+    c2_ok: !(state.simFaultActive && Math.random() > 0.7),
+    c2_cal: scenario !== 'SCENARIO_F',
+    lc1_g: state.simLc1Weight,
+    lc1_raw: lc1Raw,
+    lc1_ok: !(state.simFaultActive && Math.random() > 0.8),
+    lc1_cal: scenario !== 'SCENARIO_F',
+    lc1_factor: 420.0,
+    lc1_tare: 100000,
+    lc2_g: state.simLc2Weight,
+    lc2_raw: lc2Raw,
+    lc2_ok: !(state.simFaultActive && Math.random() > 0.8),
+    lc2_cal: scenario !== 'SCENARIO_F',
+    lc2_factor: 420.0,
+    lc2_tare: 100000,
+    lid_sync_state: unoPacket.lid_cmd,
+    lid_sync_fresh: true,
+    lcd_detected: true,
+    faults: state.simFaultActive ? ['COMM_NOISE'] : [],
+    source: 'simulation'
+  };
 
-      const score = Number(anomalyData.anomaly_score || 0);
-      const isAnomaly = Boolean(anomalyData.is_anomaly);
-
-      if (dom.mlAnomalyScore) dom.mlAnomalyScore.textContent = score.toFixed(2);
-      if (dom.mlAnomalyBar) {
-        const pct = Math.min(100, Math.round(score * 100));
-        dom.mlAnomalyBar.style.width = `${pct}%`;
-        if (score >= 0.75) {
-          dom.mlAnomalyBar.style.backgroundColor = 'var(--accent-red)';
-        } else if (score >= 0.56) {
-          dom.mlAnomalyBar.style.backgroundColor = 'var(--accent-amber)';
-        } else {
-          dom.mlAnomalyBar.style.backgroundColor = 'var(--accent-forest)';
-        }
-      }
-
-      if (dom.mlAnomalyPill) {
-        if (isAnomaly) {
-          dom.mlAnomalyPill.className = 'card-pill fault';
-          dom.mlAnomalyPill.textContent = 'SUSPECTED ANOMALY';
-        } else {
-          dom.mlAnomalyPill.className = 'card-pill ok';
-          dom.mlAnomalyPill.textContent = 'NORMAL';
-        }
-      }
-
-      if (dom.mlAnomalyStatusText) {
-        const reasons = anomalyData.reasons || [];
-        dom.mlAnomalyStatusText.textContent = reasons.length > 0 
-          ? reasons.join(' • ') 
-          : 'Nominal telemetry distribution';
-      }
-    } else {
-      if (dom.mlAnomalyPill) {
-        dom.mlAnomalyPill.className = 'card-pill uncalibrated';
-        dom.mlAnomalyPill.textContent = 'MODEL OFFLINE';
-      }
-      if (dom.mlAnomalyScore) dom.mlAnomalyScore.textContent = '—';
-      if (dom.mlAnomalyStatusText) dom.mlAnomalyStatusText.textContent = 'Start ml/service.py on port 8000';
-    }
-
-    // Update Weight Forecast Card
-    if (forecastData && forecastData.status === 'forecast_ready') {
-      const pred = Number(forecastData.predicted_weight_g || 0);
-      const curr = Number(forecastData.current_weight_g || 0);
-      const delta = pred - curr;
-      const lower = Number(forecastData.lower_bound_g || 0);
-      const upper = Number(forecastData.upper_bound_g || 0);
-
-      if (dom.mlForecastVal) dom.mlForecastVal.textContent = pred.toFixed(1);
-      if (dom.mlForecastCurrent) dom.mlForecastCurrent.textContent = `${curr.toFixed(1)} g`;
-      if (dom.mlForecastDelta) {
-        const sign = delta >= 0 ? '+' : '';
-        dom.mlForecastDelta.textContent = `${sign}${delta.toFixed(1)} g`;
-        dom.mlForecastDelta.style.color = delta > 0 ? 'var(--accent-teal)' : 'var(--text-main)';
-      }
-      if (dom.mlForecastBaseline) dom.mlForecastBaseline.textContent = `${curr.toFixed(1)} g`;
-      if (dom.mlForecastSubtext) {
-        dom.mlForecastSubtext.textContent = `95% CI: [${lower.toFixed(1)}g – ${upper.toFixed(1)}g]`;
-      }
-    } else {
-      if (dom.mlForecastVal) dom.mlForecastVal.textContent = '—';
-      if (dom.mlForecastSubtext) dom.mlForecastSubtext.textContent = 'Awaiting forecast inference';
-    }
-  } catch (err) {
-    if (dom.mlServicePill) {
-      dom.mlServicePill.className = 'card-pill uncalibrated';
-      dom.mlServicePill.textContent = 'SERVICE OFFLINE';
-    }
+  // Process based on Scenario availability
+  if (scenario !== 'SCENARIO_D') {
+    processTelemetryPacket(unoPacket, 'Simulated-Uno');
   }
+  if (scenario !== 'SCENARIO_E') {
+    processTelemetryPacket(esp32Packet, 'Simulated-ESP32');
+  }
+
+  // Trigger simulated ML inference
+  runClientMLInference(esp32Packet);
 }
 
-function initMlAnalyticsControls() {
-  const horizonBtns = [
-    { el: dom.btnHorizon5m, horizon: '5m', benchmark: '808.7g (vs 1069.7g | Beats Baseline ✓)' },
-    { el: dom.btnHorizon15m, horizon: '15m', benchmark: '1193.1g (vs 1219.1g | Beats Baseline ✓)' },
-    { el: dom.btnHorizon30m, horizon: '30m', benchmark: '2237.4g (Baseline: 1327.5g | High variance)' },
-  ];
+function runClientMLInference(espPacket) {
+  // Simulated ML insights
+  const now = Date.now();
+  if (now - state.lastMlInferenceTime < 3000) return;
+  state.lastMlInferenceTime = now;
 
-  horizonBtns.forEach(({ el, horizon, benchmark }) => {
-    if (!el) return;
-    el.addEventListener('click', () => {
-      state.selectedHorizon = horizon;
-      horizonBtns.forEach(b => { if (b.el) b.el.classList.remove('active'); });
-      el.classList.add('active');
-      if (dom.mlForecastBenchmark) dom.mlForecastBenchmark.textContent = benchmark;
-      if (state.latestTelemetry) {
-        requestMlInference(state.latestTelemetry);
-      }
-    });
-  });
+  state.mlAnomalyResult = {
+    status: (state.simFaultActive || (espPacket.faults && espPacket.faults.length > 0)) ? 'suspected_anomaly' : 'normal',
+    anomaly_score: state.simFaultActive ? 0.88 : 0.04,
+    reasons: state.simFaultActive ? ['High variance in Load Cell 1 strain gauge', 'Communication jitter'] : []
+  };
+
+  state.mlForecastResult = {
+    horizon: '5m',
+    plain_english_summary: `Predicted 5m accumulation: Compartment A (+${(Math.random()*15+5).toFixed(0)}g), Compartment B (Stable).`,
+    lc1: { current_grams: state.simLc1Weight, forecast_grams: state.simLc1Weight + 15.0, projected_delta_grams: 15.0 },
+    lc2: { current_grams: state.simLc2Weight, forecast_grams: state.simLc2Weight + 5.0, projected_delta_grams: 5.0 }
+  };
 }
 
 // ============================================================================
-// BACKEND POLLING & LIVE CYCLES
+// BACKEND REST POLLING & INITIALIZATION
 // ============================================================================
-async function pollBackendTelemetry() {
-  if (state.mode === 'simulation') {
-    // In Simulation Mode, do not overwrite the synthetic active view with hardware polling
-    return;
-  }
+async function pollBackend() {
+  if (state.mode === 'simulation') return; // In simulation mode, generator drives state
 
   try {
-    const res = await fetch(`${state.backendUrl}/api/telemetry/latest`, { cache: 'no-store' });
-    if (!res.ok) throw new Error(`HTTP ${res.status}`);
-
-    const data = await res.json();
-    state.isBackendConnected = true;
-
-    if (data) {
-      if (data.device_health) {
-        state.deviceHealth = data.device_health;
-      }
-      if (data.telemetry) {
-        processTelemetryPacket(data.telemetry, 'Backend API');
-      } else {
-        renderDeviceStatusAndStaleness();
-      }
+    const res = await fetch(`${state.backendUrl}/api/telemetry/combined`, { cache: 'no-store' });
+    if (res.ok) {
+      const data = await res.json();
+      state.isBackendConnected = true;
+      processTelemetryPacket(data, 'REST-Combined');
     }
   } catch (err) {
     state.isBackendConnected = false;
-    if (!state.isSerialConnected) {
-      state.deviceHealth = {
-        overall_status: 'ALL_OFFLINE',
-        uno: { status: 'DISCONNECTED', connected: false },
-        esp32: { status: 'DISCONNECTED', connected: false }
-      };
-      renderDeviceStatusAndStaleness();
-    }
+    renderDashboard();
+  }
+}
+
+function initSimulationControls() {
+  if (dom.simScenarioSelect) {
+    dom.simScenarioSelect.addEventListener('change', (e) => {
+      state.simScenario = e.target.value;
+      logTerminal(`Simulation scenario set to: ${state.simScenario}`, 'info');
+    });
+  }
+
+  if (dom.simSpeedSelect) {
+    dom.simSpeedSelect.addEventListener('change', (e) => {
+      state.simIntervalMs = parseInt(e.target.value, 10) || 1000;
+      if (state.mode === 'simulation') startSyntheticSimulation();
+    });
+  }
+
+  if (dom.btnSimPause) {
+    dom.btnSimPause.addEventListener('click', () => {
+      state.simIsPaused = !state.simIsPaused;
+      if (dom.simPauseText) dom.simPauseText.textContent = state.simIsPaused ? 'Resume' : 'Pause';
+      if (dom.simPauseIcon) dom.simPauseIcon.textContent = state.simIsPaused ? '▶' : '⏸';
+      logTerminal(`Simulation ${state.simIsPaused ? 'PAUSED' : 'RESUMED'}`, 'info');
+    });
+  }
+
+  if (dom.btnSimReset) {
+    dom.btnSimReset.addEventListener('click', () => {
+      state.simLc1Weight = 350.0;
+      state.simLc2Weight = 220.0;
+      state.simC1Moist = 65.0;
+      state.simC2Moist = 18.0;
+      state.simFaultActive = false;
+      state.historyData = [];
+      logTerminal('Simulation state reset to baseline values', 'info');
+    });
+  }
+
+  if (dom.btnSimFault) {
+    dom.btnSimFault.addEventListener('click', () => {
+      state.simFaultActive = !state.simFaultActive;
+      if (dom.simFaultText) dom.simFaultText.textContent = state.simFaultActive ? 'Clear Fault' : 'Simulate Fault';
+      logTerminal(`Simulated hardware fault: ${state.simFaultActive ? 'INJECTED' : 'CLEARED'}`, state.simFaultActive ? 'warn' : 'info');
+    });
+  }
+
+  if (dom.modeToggleSwitch) {
+    dom.modeToggleSwitch.addEventListener('click', () => {
+      const nextMode = (state.mode === 'hardware') ? 'simulation' : 'hardware';
+      setMonitoringMode(nextMode);
+    });
+    dom.modeToggleSwitch.addEventListener('keydown', (e) => {
+      if (e.key === ' ' || e.key === 'Enter') {
+        e.preventDefault();
+        const nextMode = (state.mode === 'hardware') ? 'simulation' : 'hardware';
+        setMonitoringMode(nextMode);
+      }
+    });
   }
 }
 
 // ============================================================================
-// WINDOW INITIALIZATION
+// APPLICATION LIFECYCLE INITIALIZATION
 // ============================================================================
-window.addEventListener('DOMContentLoaded', () => {
-  logTerminal('Initializing Intelligent Waste Segregation Analytics IoT Dashboard...', 'in');
-  logTerminal('Default mode: LIVE HARDWARE MODE. Toggle available in header.', 'dim');
+document.addEventListener('DOMContentLoaded', () => {
+  initNavigation();
+  initSimulationControls();
+  initCommandControls();
 
-  // Initialize ML Analytics Controls
-  initMlAnalyticsControls();
+  // Initial render
+  renderDashboard();
 
-  // Initial Polls
-  pollBackendTelemetry();
-  fetchCategoryStats();
+  // Fetch initial lid events
   fetchLidEvents();
-  fetchHistoricalData();
 
-  // Polling Intervals
-  setInterval(pollBackendTelemetry, 1000);
-  setInterval(fetchCategoryStats, 5000);
+  // Start periodic polling of combined telemetry (1Hz)
+  setInterval(pollBackend, 1000);
+
+  // Periodic lid events refresh (every 5s)
   setInterval(fetchLidEvents, 5000);
-  setInterval(fetchHistoricalData, 10000);
-});
 
+  // Resize listener for SVG charts
+  window.addEventListener('resize', () => {
+    if (state.activeTab === 'overview') renderCharts();
+  });
+
+  logTerminal('Intelligent Waste Segregation Two-Page Dashboard Initialized', 'info');
+});

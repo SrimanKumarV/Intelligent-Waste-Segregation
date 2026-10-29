@@ -1,77 +1,109 @@
-# Calibration Guide — Intelligent Waste Segregation Analytics (Arduino Uno)
+# Sensor Calibration Guide — Four Independent Channels (ESP32)
 
-This guide documents the procedures for calibrating the active physical prototype sensors:
-1. **HX711 Load Cell**
-2. **Capacitive Soil Moisture Sensor**
-3. **HC-SR04 Proximity Sensor & Lid Actuator**
+This guide documents the independent calibration workflows for the four physical sensor channels on **Module B (ESP32 Multi-Sensor Hub)**.
 
-> **IMPORTANT:** The firmware boots with placeholder default calibration parameters. Until calibration is executed, raw values are reported and calibrated metrics are marked `null` or uncalibrated.
+All calibration parameters are persisted directly into the ESP32 Non-Volatile Storage (Preferences / NVS) so they survive device reboots without manual re-entry.
 
 ---
 
-## 1. Load Cell Calibration (HX711)
+## 1. Overview of the 4 Channels
 
-### Equipment Required
-- Known reference weight (e.g., 500g calibrated weight or a filled water bottle measured on a kitchen scale).
-- Serial terminal or Dashboard at 115200 baud.
+| Channel | Sensor Type | Connected Compartment | Pin | Default Reference | Valid Range |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| **C1** | Capacitive Soil Moisture | Compartment A (Biodegradable) | GPIO 34 | Air: 3200 ADC, Water: 1400 ADC | 200 – 3950 ADC |
+| **C2** | Capacitive Soil Moisture | Compartment B (Non-Biodegradable)| GPIO 35 | Air: 3200 ADC, Water: 1400 ADC | 200 – 3950 ADC |
+| **LC1** | HX711 Strain Gauge Load Cell | Compartment A (Biodegradable Mass) | DOUT 16, SCK 4 | Factor: 420.0 counts/g | 2.0g – 10,000g |
+| **LC2** | HX711 Strain Gauge Load Cell | Compartment B (Non-Biodegradable Mass) | DOUT 17, SCK 18| Factor: 420.0 counts/g | 2.0g – 10,000g |
 
-### Interactive Calibration Workflow
-1. Open the Serial Monitor (or the Diagnostic Terminal on the dashboard) at **115200 baud**.
-2. Send command `c` to enter calibration mode.
-3. **Step 1 — Zero / Tare:** Remove all objects from the weighing platform. Press any key when empty. The system records the tare offset.
-4. **Step 2 — Reference Mass:** Place the known reference weight (e.g. 500.0g) onto the center of the platform.
-5. Enter the exact weight in grams when prompted (e.g., `500.0`).
-6. The firmware computes the calibration factor:
-   $$\text{Calibration Factor} = \frac{\text{Raw HX711 Counts}}{\text{Known Mass in Grams}}$$
-7. The calibration factor is immediately applied in memory. Note this value and update `HX711_CALIBRATION_FACTOR_DEFAULT` in `include/config.h` if you wish to persist it across reboots.
-
-### Manual Calibration Verification Formula
-If calculating manually via serial raw output:
-$$\text{Weight (grams)} = \frac{\text{Raw Counts} - \text{Tare Offset}}{\text{Scale Factor}}$$
+> [!IMPORTANT]
+> **Channel Independence:** Never copy calibration parameters from C1 to C2 or from LC1 to LC2. Each sensor has unique physical strain tolerances, trace capacitances, and manufacturing variances.
 
 ---
 
-## 2. Capacitive Soil Moisture Sensor Dual-Point Calibration
+## 2. Calibration Workflows via Technical Operations Dashboard
 
-Capacitive soil moisture sensors do not share universal electrical characteristics; component tolerances cause significant variations in ADC response.
+The easiest way to calibrate all four channels is through **Page 2: Technical Operations** on the dashboard (`http://localhost:8080/` -> **Technical Operations** -> **Panel D**).
 
-### 2-Point Calibration Procedure
-1. Send command `m` via the Serial Monitor / Dashboard.
-2. **Endpoint 1 (Dry Air / 0% Moisture):**
-   - Hold the clean, dry sensor blade in open air.
-   - Press any key when ready.
-   - The system samples 10 readings and records `MOISTURE_RAW_AIR` (typical reading: 580–680 ADC on 10-bit Uno).
-3. **Endpoint 2 (Water Submerged / 100% Moisture):**
-   - Submerge the sensor blade up to the white boundary line in a cup of plain tap water.
-   - *Do not immerse the electronic components or solder pins at the top!*
-   - Press any key when ready.
-   - The system samples 10 readings and records `MOISTURE_RAW_WATER` (typical reading: 260–340 ADC on 10-bit Uno).
-4. **Percentage Calculation Formula:**
-   $$\text{Moisture \%} = \frac{\text{Air Raw} - \text{Measured Raw}}{\text{Air Raw} - \text{Water Raw}} \times 100\%$$
-   *(Clamped between 0.0% and 100.0%)*
+### A. Load Cell 1 (LC1) Calibration Procedure
+1. **Tare Empty Scale:**
+   - Ensure the Compartment A waste bin platform is completely empty and clean.
+   - Click the **"Tare LC1"** button.
+   - The ESP32 captures 10 readings, sets the zero tare offset, and saves it to NVS.
+   - The status line will confirm: `Status: tare (lc1) COMPLETED`.
+2. **Span Calibration with Reference Mass:**
+   - Place a known certified mass on Compartment A (e.g., 500.0g test weight).
+   - Enter `500` in the **Ref g** input field.
+   - Click **"Calibrate LC1"**.
+   - The ESP32 computes:  
+     $$\text{Calibration Factor} = \frac{\text{Raw Counts} - \text{Tare Offset}}{\text{Known Mass (g)}}$$
+   - The factor is saved to NVS and `isLc1Calibrated` is set to `true`.
+
+### B. Load Cell 2 (LC2) Calibration Procedure
+- Follow the identical 2-step workflow using the **"Tare LC2"** and **"Calibrate LC2"** controls for Compartment B.
+- Do NOT copy the LC1 factor to LC2.
+
+### C. Moisture Sensor C1 Calibration Procedure
+1. **Dry Air Reference (0% Point):**
+   - Clean and completely dry the C1 capacitive probe blade with a clean microfiber cloth.
+   - Hold the probe suspended in ambient room air.
+   - Click **"Set Dry Air Ref (0%)"** under C1.
+   - The ESP32 records the baseline voltage (typically ~3000–3400 ADC counts).
+2. **Wet Water Reference (100% Point):**
+   - Submerge the lower white capacitive trace blade into a cup of tap water (do not submerge the onboard electronics or top header).
+   - Click **"Set Wet Water Ref (100%)"** under C1.
+   - The ESP32 records the saturated water voltage (typically ~1300–1600 ADC counts).
+   - If $\text{Air Raw} > \text{Water Raw}$, calibration is stored in NVS and marked valid.
+
+### D. Moisture Sensor C2 Calibration Procedure
+- Follow the identical dry and wet sequence using the **"Set Dry Air Ref (0%)"** and **"Set Wet Water Ref (100%)"** buttons under C2.
 
 ---
 
-## 3. Ultrasonic Proximity Sensor & Lid Servo Alignment
+## 3. Serial JSON Command Protocol (Direct CLI Calibration)
 
-### Proximity Threshold Tuning
-- In `include/config.h`, `PROXIMITY_THRESHOLD_CM` defaults to `20.0f` cm.
-- Measure the normal approach distance for a user's hand or waste basket. If false triggers occur from ambient movement, decrease to `15.0f` cm.
-- The firmware requires `PROXIMITY_DEBOUNCE_COUNT = 2` consecutive positive samples to trigger lid opening, eliminating single-cycle acoustic reflection noise.
+When interacting directly with the ESP32 over USB Serial at 115200 baud, send structured JSON command frames:
 
-### Servo Angle Alignment
-- **Closed Angle (`LID_SERVO_CLOSED_ANGLE`):** 0°
-- **Open Angle (`LID_SERVO_OPEN_ANGLE`):** 90° (or adjust up to 120° depending on your physical lid hinge geometry).
-- **Hold Open Timer (`LID_HOLD_OPEN_MS`):** 4000ms (4 seconds). The lid stays open as long as an object remains within proximity and will close 4 seconds after the hand leaves.
+```json
+// Tare Load Cell 1
+{"cmd":"tare","channel":"lc1"}
+
+// Calibrate Load Cell 1 with 500g known mass
+{"cmd":"cal_weight","channel":"lc1","ref_g":500.0}
+
+// Tare Load Cell 2
+{"cmd":"tare","channel":"lc2"}
+
+// Calibrate Load Cell 2 with 500g known mass
+{"cmd":"cal_weight","channel":"lc2","ref_g":500.0}
+
+// Record Dry Reference for C1
+{"cmd":"cal_moist_dry","channel":"c1"}
+
+// Record Wet Reference for C1
+{"cmd":"cal_moist_wet","channel":"c1"}
+
+// Record Dry Reference for C2
+{"cmd":"cal_moist_dry","channel":"c2"}
+
+// Record Wet Reference for C2
+{"cmd":"cal_moist_wet","channel":"c2"}
+
+// Query Diagnostics and Stored Calibration Status
+{"cmd":"status"}
+```
+
+### Expected Acknowledgments (ACK):
+```json
+{"ack":"tare","channel":"lc1","status":"COMPLETED"}
+{"ack":"cal_weight","channel":"lc1","factor":422.35,"status":"COMPLETED"}
+{"ack":"cal_moist_dry","channel":"c1","raw":3210,"status":"COMPLETED"}
+{"ack":"cal_moist_wet","channel":"c1","raw":1420,"status":"COMPLETED"}
+```
 
 ---
 
-## 4. Calibration Troubleshooting
+## 4. Uncalibrated vs Calibrated Display Rules
 
-| Symptom | Cause | Remedy |
-| :--- | :--- | :--- |
-| Weight reads `TIMEOUT` | HX711 DOUT/SCK disconnected | Check D2/D3 wiring and 5V power supply. |
-| Weight negative after removing item | Normal temperature/tare drift | Send command `t` to re-tare the empty platform. |
-| Moisture % reports > 100% or < 0% | Operating outside air/water endpoints | Re-run 2-point calibration with sensor fully dry. |
-| Moisture reads 0 or 1023 always | Wire detached or pin shorted | Inspect Pin A0 connection. Valid ADC range is 50–980. |
-| Servo vibrates or resets Uno | High current draw during movement | Power servo from external 5V 1A adapter with common GND. |
+1. **Explicit Nulls:** If a sensor is uncalibrated, disconnected, or timed out, the firmware and backend emit explicit `null` values for calibrated percentage and mass.
+2. **Never Fabricate Zeroes:** The dashboard will display `—` (dash) and `UNCALIBRATED` rather than showing `0%` or `0.0g`.
+3. **Weight Totals:** Uncalibrated load cells are excluded from total measured mass calculations, and the dashboard clearly displays `kg (Partial)` or `Weight data unavailable`.

@@ -1,115 +1,72 @@
 # Project Status — Intelligent Solid Waste Segregation Analytics
 
-**Last Updated:** October 28, 2026  
-**Firmware Version:** 2.0.0-UNO  
-**Microcontroller Target:** Arduino Uno R3 (Microchip ATmega328P, 5V Logic)  
-**Supported Categories:** Biodegradable Waste & Non-Biodegradable Waste (Strict 2-Class Model)  
+**Last Updated:** October 29, 2026  
+**System Architecture:** Multi-Microcontroller IoT System (Module A: Arduino Uno & Module B: ESP32 DevKit V1)  
+**Dashboard:** Two-Page Operational Experience (Overview & Technical Operations)  
+**Sensors:** 4 Independent Channels (C1, C2, LC1, LC2) across 2 Active Compartments + 1 Reserved Future Use  
+**Firmware Targets:** `2.1.0-UNO` (ATmega328P) & `2.2.0-ESP32` (DevKit V1)  
+**Displays:** Dual Modular I2C 16x2 Character LCDs on Uno (0x27) and ESP32 (0x27)  
 
 ---
 
 ## 1. Project Overview
 
-The project has been refactored from a multi-sensor ESP32 proof-of-concept into a functional, professional, remotely accessible IoT Smart Waste Segregation Analytics system centered on an **Arduino Uno** physical prototype with genuine sensor measurements, automatic proximity-driven lid opening, and zero synthetic/fabricated dashboard data.
+The project implements a distributed, dual-microcontroller smart waste segregation system:
+1. **Module A (Arduino Uno):** Autonomously controls proximity detection (HC-SR04) and automatic lid opening/closing servo actuation. Operates completely independently from the host and ESP32 to guarantee safety and responsiveness. Drives its own connected 16x2 I2C LCD.
+2. **Module B (ESP32 DevKit V1):** High-resolution multi-channel sensor hub reading 4 independent physical sensor channels (Capacitive Moisture C1 and C2 on ADC1; Load Cell 1 and Load Cell 2 via dual HX711 interfaces). Manages Preferences/NVS persistent calibration and displays 4-page rotating telemetry on its connected 16x2 I2C LCD.
+3. **Host Backend & Gateway:** Bridges dual USB serial COM ports, coordinates cross-device lid synchronization from Uno to ESP32 LCD, ingests telemetry, exposes REST endpoints, and logs genuine data.
+4. **Machine Learning Pipeline:** Real-time multi-channel anomaly detection (Isolation Forest + rule-based attribution), independent dual load cell waste mass forecasting (+5m, +15m, +30m with persistence baseline comparison), and experimental 2-class category classification (Biodegradable vs Non-Biodegradable; Compartment C explicitly excluded).
+5. **Two-Page Dashboard:**
+   - **Page 1: Overview Dashboard:** High-level environmental metrics, dual-device health, 3 compartment cards (Bio, Non-Bio, Reserved), simple trends, plain-English alerts, and accessible ML insights.
+   - **Page 2: Technical Operations:** Detailed microcontroller management, 4-channel raw/calibrated telemetry, lid state machine diagnostics, targeted command console with non-blocking calibration workflows, LCD diagnostics, and transparent ML evaluation benchmarks.
 
 ---
 
-## 2. Completed Implementation Tasks ✅
+## 2. Completed Implementation Matrix ✅
 
-### A. Microcontroller & Hardware Alignment
-- [x] Refactored `platformio.ini` with `[env:uno]` as default target (ATmega328P, 16MHz, 5V).
-- [x] Aligned pin mapping and logic levels for 5.0V TTL operation (`docs/PIN_MAPPING.md`).
-- [x] Streamlined sensor suite to the 3 active prototype sensors + 1 actuator:
-  - 1× Capacitive Soil Moisture Sensor (Analog Pin A0, 10-bit ADC 0–1023)
-  - 1× Load Cell + HX711 Amplifier (Digital Pins D2 DOUT, D3 SCK)
-  - 1× HC-SR04 Ultrasonic Proximity Sensor for Automatic Lid Opening (Digital Pins D4 TRIG, D5 ECHO)
-  - 1× Lid Servo Actuator (PWM Pin D6, 0° Closed, 90° Open)
-  - 3× Diagnostic LEDs (D13 Heartbeat, D7 Proximity Active, D8 Sensor Fault)
-- [x] Removed unsupported legacy ESP32 multi-sensor assignments (gas, metal, dual fill-level).
+### Phase 1 & 2: System Architecture & Three Compartments
+- [x] Clear architectural division: Uno owns ultrasonic proximity and autonomous lid servo; ESP32 owns C1, C2, Load Cell 1, and Load Cell 2.
+- [x] Compartment A assigned to Biodegradable Waste (Moisture C1 on GPIO 34, Load Cell 1 on GPIO 16/4).
+- [x] Compartment B assigned to Non-Biodegradable Waste (Moisture C2 on GPIO 35, Load Cell 2 on GPIO 17/18).
+- [x] Compartment C configured as `RESERVED_FUTURE_USE` (neutral indicator, excluded from mass totals, zero fake data suppressed).
 
-### B. Firmware & Telemetry Architecture
-- [x] Non-blocking sensor acquisition loop and proximity debounce (`src/sensors.cpp`).
-- [x] Automatic lid state machine (`CLOSED` ➔ `OBJECT_DETECTED` ➔ `OPEN` ➔ `HOLD_TIMER` ➔ `CLOSED` ➔ `COOLDOWN`).
-- [x] Dual-point moisture calibration (Air Raw 0% vs Water Raw 100%) with explicit uncalibrated status.
-- [x] HX711 tare and reference mass calibration routines.
-- [x] Zero-heap-allocation JSON Lines telemetry serializer (`src/serial_output.cpp`) optimized for Uno 2KB SRAM.
-- [x] Strict physical measurement truth: uncalibrated and missing values are emitted as explicit `null` (never fake zeroes).
-- [x] Non-blocking serial command processor supporting `'t'`, `'c'`, `'m'`, `'o'`, `'x'`, `'h'`.
+### Phase 3 & 4: Four Independent Sensor Channels & Calibration
+- [x] Independent pin assignments, raw ADC reads, and calibration parameters for C1 (GPIO 34) and C2 (GPIO 35) on ESP32 ADC1.
+- [x] Independent HX711 instances, DOUT/SCK pins, tare offsets, and calibration factors for Load Cell 1 and Load Cell 2.
+- [x] Non-Volatile Storage (Preferences/NVS) persistence on ESP32.
+- [x] Non-blocking calibration commands for empty-scale tare, reference mass calibration, and dry/wet moisture references.
+- [x] Explicit null preservation: uncalibrated or disconnected sensors emit `null` instead of fabricated zeroes.
 
-### C. Backend & Data Pipeline
-- [x] Production IoT Backend Server (`backend/server.ps1` and `backend/server.js`) listening on port 8080.
-- [x] Persistent JSONL storage engine (`data/telemetry.jsonl`, `data/lid_events.jsonl`, `data/classifications.jsonl`).
-- [x] Full REST API endpoints:
-  - `GET /api/health` — Device connectivity, staleness tracking, active fault bitmask.
-  - `GET /api/telemetry/latest` — Latest genuine sensor measurements with server receipt timestamp.
-  - `GET /api/telemetry/history` — Time-series measurements for charting.
-  - `GET /api/lid/events` — Genuine proximity and lid actuation timeline.
-  - `GET /api/categories` — Real verified 2-category statistics (Biodegradable vs Non-Biodegradable).
-  - `POST /api/telemetry` — Ingestion endpoint for gateway or USB serial.
-  - `POST /api/classification` — Verified waste segregation event logging.
-- [x] Serial Gateway bridge (`gateway/serial_gateway.ps1`) for forwarding Arduino Uno USB telemetry to backend.
+### Phase 5 & 6: Two-Page Dashboard & Modular LCD Implementation
+- [x] Single-page application architecture with seamless tab navigation (`Overview` vs `Technical Operations`).
+- [x] Overview page with total measured weight, lid actuator state, microcontroller health cards, 3 compartment cards, simple SVG charts, plain-English alerts, and ML insights.
+- [x] Technical Operations page with device management panels, 4-channel diagnostic meters, lid state machine parameters, targeted command console, and ML model benchmarks.
+- [x] Modular I2C LCD driver on Arduino Uno (`src/lcd_display.cpp`, `include/lcd_display.h`) with non-blocking I2C presence ping and priority lid state display.
+- [x] Modular I2C LCD driver on ESP32 (`firmware/esp32/esp32_sensors.ino`) with 4-page rotating display and synchronized lid state.
+- [x] Cross-device lid synchronization via Host Serial Gateway (`gateway/serial_gateway.ps1`) with 5000ms staleness timeout.
 
-### D. Operational IoT Dashboard
-- [x] Professional light environmental monitoring aesthetic (Forest green `#15803d`, off-white `#f8fafc`, charcoal text).
-- [x] Removed ALL simulation sliders, artificial preset scenarios, and fake continuous loops.
-- [x] Live physical sensor cards (Moisture, Weight, Proximity, Lid Actuator) with explicit empty and uncalibrated states.
-- [x] Two-Category analytics cards displaying strictly verified recorded events.
-- [x] Real-time lid activity log table.
-- [x] SVG historical analytics charts (Weight vs Time & Moisture vs Time) with honest empty states.
-- [x] Direct USB Web Serial connection support (direct browser-to-Uno connection via Chrome/Edge).
+### Phase 7 & 8: Firmware, Backend & Data Normalization
+- [x] Root `platformio.ini` configured with independent build environments: `[env:uno]` (default) and `[env:esp32dev]`.
+- [x] Removed blocking legacy calibration routines from Uno firmware (`src/serial_output.cpp`), returning guidance to route calibration commands to ESP32.
+- [x] Updated Native PowerShell backend (`backend/server.ps1`) and Node.js backend (`backend/server.js`) with 4-channel telemetry schema, `/api/cmd/uno`, `/api/cmd/esp32`, `/api/compartments`, and device health.
+- [x] Validated ASCII syntax for native Windows PowerShell 5.1 compatibility.
 
-### E. Dual-Mode Monitoring & Deterministic Simulation Engine
-- [x] Compact, accessible toggle switch in dashboard header (`role="switch"`, keyboard navigation via Space/Enter, debounce protection).
-- [x] Clear visual status banners:
-  - `LIVE HARDWARE MODE` — with connection indicators, last hardware timestamp, and disconnect notice.
-  - `SIMULATION MODE — SYNTHETIC DATA` — with session ID, start timestamp, scenario badge, and hardware isolation notice.
-- [x] Shared telemetry processing pipeline (`processTelemetryPacket`) ensuring zero duplicate UI rendering code.
-- [x] Deterministic synthetic sensor telemetry generator implementing:
-  - Capacitive moisture model with correlated raw 10-bit ADC (`50–980 ADC`) and moisture percentage (`0–100%`).
-  - HX711 load cell model with non-negative weight in grams and correlated raw counts.
-  - HC-SR04 ultrasonic proximity & lid actuator coherent state machine (Approach ≤ 20cm ➔ Lid OPEN 90° ➔ Hold 4s ➔ Lid CLOSE 0° ➔ Cooldown).
-  - Actuator safety: physical serial transmission and servo commands are disabled in Simulation Mode.
-- [x] Three configurable simulation scenarios:
-  - **Scenario A:** Normal Operation (slowly changing readings, natural visitor approaches, balanced organic/inorganic levels).
-  - **Scenario B:** Bin Filling (progressive mass accumulation +75–140g per cycle, rising organic moisture curve).
-  - **Scenario C:** Hardware Unavailable / Offline Fault (demonstrates system resilience and fault alerts without Arduino).
-- [x] Simulation controls panel: Scenario selector, interval speed (0.5s, 1.0s, 2.0s), Pause/Resume, Reset/Restart, and Simulate Fault toggle.
-- [x] Strict Data Provenance & Separation:
-  - Simulated packets carry `source: "simulation"` and `dev: "SIM-WS01"`.
-  - Zero synthetic packets written to `data/telemetry.jsonl`.
-  - Simulation charts render strictly from an in-memory rolling buffer (`simHistoryData`).
-- [x] Backend synchronization via `GET /api/monitoring/mode`, `POST /api/monitoring/mode`, and `GET /api/simulation/status`.
-- [x] Automated test suite in `test/test_simulation_mode.ps1` with 18 automated tests verifying mode switching, schema validation, and data separation.
-
-### F. Documentation & Protocol
-- [x] Updated `docs/PIN_MAPPING.md`, `docs/WIRING_GUIDE.md`, `docs/CALIBRATION_GUIDE.md`, and `docs/TEST_PLAN.md`.
-- [x] Created `docs/TELEMETRY_PROTOCOL.md` specifying JSON Lines schema and fault codes.
-
-### G. Sensor-Based Machine Learning Pipeline
-- [x] Physics-grounded synthetic telemetry generator (`ml/synthetic_data.py`) with 6 distinct operating scenarios.
-- [x] Reproducible synthetic dataset generator (`ml/generate_data.py`) with session-based train/val/test splits (24,200 records).
-- [x] Dual-mode batch & streaming feature extraction pipeline (`ml/features.py`).
-- [x] Model A: Isolation Forest Sensor Anomaly Detector (`ml/anomaly_detector.py`) with calibrated decision threshold and interpretable reasons.
-- [x] Model B: Multi-Horizon Random Forest Waste Forecaster (`ml/weight_forecaster.py`) evaluating +5m, +15m, and +30m horizons with persistence baseline comparison.
-- [x] Model C: Prototype Category Classifier (`ml/category_classifier.py`) with transparent synthetic disclaimers.
-- [x] Model training and artifact serialization script (`ml/train.py`) producing `.joblib` models and `model_metadata.json`.
-- [x] High-performance FastAPI ML inference microservice (`ml/service.py`) on port 8000.
-- [x] IoT backend reverse proxy routing for `/api/ml/*` in `server.ps1` and `server.js`.
-- [x] Operational dashboard ML Analytics UI with real-time anomaly progress bar, horizon selection buttons (`+5m`, `+15m`, `+30m`), and provenance badges.
-- [x] Automated test suite in `test/test_ml.py` (11 unit/integration tests) integrated into `test/run_tests.ps1`.
+### Phase 9 & 10: Multi-MCU Synthetic Simulation & Retrained ML Pipeline
+- [x] Simulation Mode generates 2 independent streams (Simulated Uno and Simulated ESP32) with 6 scenarios (A–F).
+- [x] Physical actuators completely isolated during simulation. Compartment C remains reserved and inactive.
+- [x] Retrained 4-channel reproducible dataset (`data/synthetic/sensor_readings.csv`, `data/synthetic/sensor_readings.jsonl`).
+- [x] Channel-attributed Anomaly Detector (`ml/anomaly_detector.py`).
+- [x] Independent dual load-cell Weight Forecaster (`ml/weight_forecaster.py`) evaluating LC1 and LC2 against persistence baselines.
+- [x] Strict 2-class Category Classifier (`ml/category_classifier.py`) excluding Compartment C.
+- [x] Fast ML microservice (`ml/service.py`) with honest fallback status.
 
 ---
 
-## 3. Pending Physical Steps (Requires Connected Hardware) ⏳
+## 3. Verification & Automated Test Results
 
-The software, firmware, telemetry pipeline, backend, and dashboard are fully implemented. The following tasks require physical hardware:
-
-1. **Connect Arduino Uno:** Plug the Arduino Uno into a USB port on your PC.
-2. **Wire Sensors:** Complete breadboard wiring according to [`docs/WIRING_GUIDE.md`](docs/WIRING_GUIDE.md).
-3. **Upload Firmware:** Run `pio run --target upload -e uno` via PlatformIO CLI or VS Code.
-4. **Execute Calibration:**
-   - Run moisture 2-point calibration (send `m` in serial terminal).
-   - Run load cell calibration with a known reference weight (send `c`).
-5. **Start Gateway / Backend:**
-   - Launch backend: `powershell -ExecutionPolicy Bypass -File backend\server.ps1`
-   - Launch gateway: `powershell -ExecutionPolicy Bypass -File gateway\serial_gateway.ps1 -ComPort COMx`
-   - Access dashboard at `http://localhost:8080/`.
+| Test Suite | Command | Result | Notes |
+| :--- | :--- | :--- | :--- |
+| **Asset Integrity Test** | `powershell -ExecutionPolicy Bypass -File test/test_static_assets.ps1` | **PASS (100%)** | Validated `index.html`, `app.js`, `styles.css` |
+| **Simulation Mode Test** | `powershell -ExecutionPolicy Bypass -File test/test_simulation_mode.ps1` | **PASS (18/18)** | 0 failures; validated mode isolation & API endpoints |
+| **Sensor ML Suite** | `python -m pytest test/test_ml.py` | **PASS (11/11)** | All model features, pipelines & synthetic physics verified |
+| **End-to-End Suite** | `powershell -ExecutionPolicy Bypass -File test/run_tests.ps1` | **PASS (ALL)** | Complete integration checks passed |

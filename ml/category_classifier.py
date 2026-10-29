@@ -2,10 +2,10 @@
 Intelligent Waste Segregation Analytics — Experimental Waste Category Classifier
 PROTOTYPE ONLY: Demonstrates ML classifier pipeline on synthetic sensor distributions.
 
-CRITICAL DISCLAIMER:
-Moisture percentage and mass alone cannot conclusively determine material identity
-or chemical biodegradability in real-world environments. This module operates on
-weak synthetic profile labels and does NOT establish genuine material recognition.
+CRITICAL ARCHITECTURE CONSTRAINTS:
+1. Strict 2-Class Model: "BIODEGRADABLE" (Category A) vs "NON_BIODEGRADABLE" (Category B).
+2. Compartment C is an unconfigured future-use bin, NOT a classification label.
+3. Moisture and mass alone cannot conclusively determine real-world chemical identity.
 """
 
 import os
@@ -14,7 +14,6 @@ from typing import Dict, Any, List, Optional
 import numpy as np
 import pandas as pd
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report
 
 from ml.features import FEATURE_COLUMNS, OnlineFeatureExtractor
 
@@ -22,10 +21,10 @@ from ml.features import FEATURE_COLUMNS, OnlineFeatureExtractor
 class ExperimentalCategoryClassifier:
     """
     Experimental prototype classifier predicting synthetic categories
-    ("BIODEGRADABLE", "NON_BIODEGRADABLE", "UNCLASSIFIED").
+    ("BIODEGRADABLE", "NON_BIODEGRADABLE").
     """
 
-    CATEGORIES = ["BIODEGRADABLE", "NON_BIODEGRADABLE", "UNCLASSIFIED"]
+    CATEGORIES = ["BIODEGRADABLE", "NON_BIODEGRADABLE"]
 
     def __init__(self, n_estimators: int = 80, random_state: int = 42):
         self.n_estimators = n_estimators
@@ -41,8 +40,8 @@ class ExperimentalCategoryClassifier:
         self.online_extractor = OnlineFeatureExtractor(buffer_size=10)
 
     def fit(self, X_train: pd.DataFrame, y_train: pd.Series) -> "ExperimentalCategoryClassifier":
-        """Fits classifier on synthetic rule-derived profile labels."""
-        valid_mask = y_train.isin(["BIODEGRADABLE", "NON_BIODEGRADABLE"])
+        """Fits classifier strictly on active 2 categories (Biodegradable vs Non-Biodegradable)."""
+        valid_mask = y_train.isin(self.CATEGORIES)
         if valid_mask.sum() > 0:
             self.model.fit(X_train.loc[valid_mask, self.feature_columns], y_train.loc[valid_mask])
             self.is_fitted = True
@@ -62,30 +61,36 @@ class ExperimentalCategoryClassifier:
         probs = self.model.predict_proba(features_df[self.feature_columns])[0]
         classes = self.model.classes_
         best_idx = int(np.argmax(probs))
-        pred_cat = classes[best_idx]
+        pred_cat = str(classes[best_idx])
         confidence = round(float(probs[best_idx]) * 100, 1)
 
         return {
             "status": "classified",
             "predicted_category": pred_cat,
             "confidence_percent": confidence,
+            "classes": [str(c) for c in classes],
+            "probabilities": [round(float(p), 4) for p in probs],
             "is_experimental": True,
             "disclaimer": "SYNTHETIC PROFILE INFERENCE — NOT REAL-WORLD MATERIAL VERIFICATION",
             "provenance": "SYNTHETIC MODEL TEST"
         }
 
     def save(self, filepath: str) -> None:
-        """Saves classifier artifact."""
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
-        joblib.dump({"model": self.model, "is_fitted": self.is_fitted}, filepath)
+        joblib.dump({
+            "model": self.model,
+            "is_fitted": self.is_fitted,
+            "feature_columns": self.feature_columns,
+            "categories": self.CATEGORIES
+        }, filepath)
 
     @classmethod
     def load(cls, filepath: str) -> "ExperimentalCategoryClassifier":
-        """Loads classifier artifact."""
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Classifier artifact not found at {filepath}")
         payload = joblib.load(filepath)
         clf = cls()
         clf.model = payload["model"]
         clf.is_fitted = payload.get("is_fitted", True)
+        clf.feature_columns = payload.get("feature_columns", FEATURE_COLUMNS)
         return clf

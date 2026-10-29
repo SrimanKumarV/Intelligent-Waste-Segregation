@@ -1,6 +1,7 @@
 """
 Intelligent Waste Segregation Analytics — Fast, Resilient ML Inference Microservice
-REST API serving real-time anomaly detection, multi-horizon weight forecasting, and model metadata.
+REST API serving real-time anomaly detection, multi-horizon weight forecasting for dual load cells,
+experimental category classification, and model metadata.
 """
 
 import os
@@ -32,12 +33,11 @@ async def lifespan(app: FastAPI):
 # -----------------------------------------------------------------------------
 app = FastAPI(
     title="Intelligent Waste Segregation — ML Inference Service",
-    description="Real-time numerical sensor anomaly detection and waste accumulation forecasting.",
-    version="1.0.0",
+    description="Real-time multi-channel sensor anomaly detection and dual load cell forecasting.",
+    version="2.0.0",
     lifespan=lifespan
 )
 
-# Enable CORS for cross-origin dashboard requests
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -99,27 +99,53 @@ def load_all_models() -> None:
             print(f"[ML SERVICE] Failed loading model metadata: {e}")
 
 
-
-
 # -----------------------------------------------------------------------------
-# TELEMETRY INPUT SCHEMA
+# TELEMETRY INPUT SCHEMA (4 CHANNELS + DUAL DEVICE SUPPORT)
 # -----------------------------------------------------------------------------
 class TelemetryRecord(BaseModel):
     v: Optional[Any] = 1
     dev: Optional[str] = "SIM-WS01"
     seq: Optional[int] = 0
     up: Optional[int] = 0
-    moist_raw: Optional[int] = 620
+    uno_connected: Optional[bool] = True
+    esp32_connected: Optional[bool] = True
+
+    # Module A: Uno
+    dist_cm: Optional[float] = None
+    prox: Optional[bool] = False
+    lid_cmd: Optional[str] = "CLOSED"
+
+    # Module B: ESP32 4 Channels
+    c1_raw: Optional[int] = None
+    c1_pct: Optional[float] = None
+    c1_ok: Optional[bool] = True
+    c1_cal: Optional[bool] = True
+
+    c2_raw: Optional[int] = None
+    c2_pct: Optional[float] = None
+    c2_ok: Optional[bool] = True
+    c2_cal: Optional[bool] = True
+
+    lc1_g: Optional[float] = None
+    lc1_raw: Optional[int] = None
+    lc1_ok: Optional[bool] = True
+    lc1_cal: Optional[bool] = True
+
+    lc2_g: Optional[float] = None
+    lc2_raw: Optional[int] = None
+    lc2_ok: Optional[bool] = True
+    lc2_cal: Optional[bool] = True
+
+    # Legacy Backward-Compatibility Aliases
+    moist_raw: Optional[int] = None
     moist_pct: Optional[float] = None
     moist_ok: Optional[bool] = True
     moist_cal: Optional[bool] = True
     weight_g: Optional[float] = None
-    weight_raw: Optional[int] = 100000
+    weight_raw: Optional[int] = None
     weight_ok: Optional[bool] = True
     weight_cal: Optional[bool] = True
-    dist_cm: Optional[float] = None
-    prox: Optional[bool] = False
-    lid_cmd: Optional[str] = "CLOSED"
+
     faults: Optional[List[str]] = Field(default_factory=list)
     source: Optional[str] = "simulation"
     scenario: Optional[str] = None
@@ -161,7 +187,7 @@ def get_ml_status():
 
     return {
         "status": "ready",
-        "model_version": model_metadata.get("model_version", "1.0.0"),
+        "model_version": model_metadata.get("model_version", "2.0.0"),
         "training_timestamp": model_metadata.get("training_timestamp"),
         "training_samples": model_metadata.get("training_sample_count"),
         "validation_samples": model_metadata.get("validation_sample_count"),
@@ -187,14 +213,14 @@ def get_ml_metrics():
         "disclaimer": "SYNTHETIC MODEL TEST — NOT REAL-WORLD VALIDATION",
         "anomaly_detector": models_info.get("anomaly_detector", {}).get("metrics_on_test", {}),
         "weight_forecaster": models_info.get("weight_forecaster", {}).get("metrics_on_test", {}),
+        "category_classifier": models_info.get("category_classifier", {}),
     }
 
 
 @app.post("/api/ml/anomaly")
 def detect_anomaly(telemetry: TelemetryRecord):
     """
-    Performs real-time anomaly detection for a single telemetry record.
-    Returns status ('normal' | 'suspected_anomaly'), normalized score (0.0 - 1.0), and diagnostic reasons.
+    Performs real-time anomaly detection with channel-specific attribution (C1, C2, LC1, LC2, Uno, ESP32).
     """
     if anomaly_detector is None or not anomaly_detector.is_fitted:
         return {
@@ -216,16 +242,17 @@ def forecast_weight(
     horizon: str = Query("5m", pattern="^(5m|15m|30m)$", description="Forecast horizon: 5m, 15m, or 30m")
 ):
     """
-    Predicts future waste mass (grams) for the requested horizon (+5m, +15m, +30m).
-    Enforces non-negative bounds and capacity limits, comparing against persistence baseline.
+    Predicts future waste mass (grams) for Load Cell 1 and Load Cell 2 independently (+5m, +15m, +30m).
     """
     if weight_forecaster is None or not weight_forecaster.is_fitted:
-        current_g = float(telemetry.weight_g or 0.0)
+        current_lc1 = float(telemetry.lc1_g or telemetry.weight_g or 0.0)
+        current_lc2 = float(telemetry.lc2_g or 0.0)
         return {
             "status": "model_unavailable",
-            "current_weight_g": current_g,
-            "predicted_weight_g": current_g,
             "horizon": horizon,
+            "plain_english_summary": "ML forecaster offline. Displaying current weights.",
+            "lc1": {"current_grams": current_lc1, "forecast_grams": current_lc1, "projected_delta_grams": 0.0},
+            "lc2": {"current_grams": current_lc2, "forecast_grams": current_lc2, "projected_delta_grams": 0.0},
             "provenance": "MODEL_UNAVAILABLE"
         }
 
@@ -236,23 +263,16 @@ def forecast_weight(
 @app.post("/api/ml/classify")
 def classify_waste_category(telemetry: TelemetryRecord):
     """
-    Experimental prototype waste category classifier.
-    Operates on synthetic rule-derived profile labels.
+    Experimental prototype waste category classifier (Strict 2-Class Model: Biodegradable vs Non-Biodegradable).
     """
     if category_classifier is None or not category_classifier.is_fitted:
         return {
             "status": "model_unavailable",
             "predicted_category": "UNCLASSIFIED",
             "confidence_percent": 0.0,
-            "disclaimer": "Experimental classifier not available"
+            "disclaimer": "Classifier artifact not loaded. Execute ml/train.py to initialize.",
+            "provenance": "MODEL_UNAVAILABLE"
         }
 
     record_dict = telemetry.model_dump()
     return category_classifier.predict_single(record_dict)
-
-
-if __name__ == "__main__":
-    import uvicorn
-    port = int(os.environ.get("ML_PORT", 8000))
-    print(f"[ML SERVICE] Starting Uvicorn on http://127.0.0.1:{port}...")
-    uvicorn.run("ml.service:app", host="127.0.0.1", port=port, log_level="info")

@@ -11,6 +11,7 @@
 #include "serial_output.h"
 #include "sensors.h"
 #include "config.h"
+#include "lcd_display.h"
 
 void serial_init() {
     Serial.begin(SERIAL_BAUD_RATE);
@@ -22,12 +23,11 @@ void serial_printBanner() {
     Serial.println();
     Serial.println(F("=================================================="));
     Serial.println(F(" INTELLIGENT WASTE SEGREGATION ANALYTICS (UNO)   "));
-    Serial.println(F(" Firmware: 2.0.0-UNO | Target: ATmega328P        "));
-    Serial.println(F(" Active Sensors: Moisture (A0), HX711 (D2/D3),   "));
-    Serial.println(F("                 HC-SR04 Proximity (D4/D5), Servo"));
-    Serial.println(F(" Categories: Biodegradable / Non-Biodegradable   "));
+    Serial.println(F(" Firmware: 2.1.0-UNO | Target: ATmega328P        "));
+    Serial.println(F(" Role: Module A (Proximity & Autonomous Lid)     "));
+    Serial.println(F(" Hardware: HC-SR04 (D4/D5), Servo (D6), LEDs, LCD"));
     Serial.println(F(" Telemetry Format: JSON Lines (115200 baud)      "));
-    Serial.println(F(" Send 'h' for interactive serial commands        "));
+    Serial.println(F(" Send 'h' for help, 'o'/'x' for lid commands      "));
     Serial.println(F("=================================================="));
     Serial.println();
 }
@@ -80,14 +80,13 @@ void serial_printTelemetryJSON(const SystemTelemetry& telem) {
 }
 
 void serial_printHelp() {
-    Serial.println(F("\n--- AVAILABLE SERIAL COMMANDS ---"));
-    Serial.println(F("  t  : Tare HX711 load cell (zero point)"));
-    Serial.println(F("  c  : Calibrate load cell with reference mass"));
-    Serial.println(F("  m  : Calibrate moisture sensor air & water thresholds"));
+    Serial.println(F("\n--- AVAILABLE SERIAL COMMANDS (UNO - MODULE A) ---"));
     Serial.println(F("  o  : Force lid OPEN command"));
     Serial.println(F("  x  : Force lid CLOSE command"));
+    Serial.println(F("  s  : Request Uno device status and LCD presence"));
     Serial.println(F("  h  : Print this help menu"));
-    Serial.println(F("---------------------------------\n"));
+    Serial.println(F("  [Note: C1, C2, LC1, LC2 calibration commands belong to ESP32]"));
+    Serial.println(F("---------------------------------------------------\n"));
 }
 
 void serial_handleCommands() {
@@ -98,85 +97,6 @@ void serial_handleCommands() {
     while (Serial.available()) Serial.read();
 
     switch (cmd) {
-        case 't':
-        case 'T':
-            Serial.println(F("[CMD] Taring load cell..."));
-            sensors_tareWeight();
-            Serial.println(F("[CMD] Tare complete."));
-            break;
-
-        case 'c':
-        case 'C': {
-            Serial.println(F("\n[CALIB] --- LOAD CELL CALIBRATION ---"));
-            Serial.println(F("1. Ensure scale is EMPTY. Press any key to tare..."));
-            while (!Serial.available()) { delay(10); }
-            while (Serial.available()) Serial.read();
-
-            sensors_tareWeight();
-            Serial.println(F("Tare confirmed."));
-
-            Serial.println(F("2. Place a KNOWN weight on load cell."));
-            Serial.println(F("Enter weight in grams (e.g., 500):"));
-            while (!Serial.available()) { delay(10); }
-            float knownMass = Serial.parseFloat();
-            while (Serial.available()) Serial.read();
-
-            if (knownMass <= 0.0f) {
-                Serial.println(F("[ERROR] Invalid mass entered. Calibration cancelled."));
-                break;
-            }
-
-            Serial.print(F("Sampling with known mass: "));
-            Serial.print(knownMass, 1);
-            Serial.println(F("g..."));
-            delay(1500);
-
-            // Read raw units with scale=1.0f
-            sensors_setWeightCalibration(1.0f);
-            WeightReading wr = sensors_readWeight();
-            if (wr.status == SENSOR_TIMEOUT || wr.rawValue == 0) {
-                Serial.println(F("[ERROR] HX711 communication failed. Check wiring."));
-                break;
-            }
-
-            float newFactor = (float)wr.rawValue / knownMass;
-            sensors_setWeightCalibration(newFactor);
-
-            Serial.print(F("[SUCCESS] New calibration factor: "));
-            Serial.println(newFactor, 4);
-            break;
-        }
-
-        case 'm':
-        case 'M': {
-            Serial.println(F("\n[CALIB] --- MOISTURE SENSOR CALIBRATION ---"));
-            Serial.println(F("1. Hold sensor in DRY AIR. Press any key to record Air Raw..."));
-            while (!Serial.available()) { delay(10); }
-            while (Serial.available()) Serial.read();
-
-            MoistureReading dryRead = sensors_readMoisture();
-            int airRaw = dryRead.rawValue;
-            Serial.print(F("Recorded Air Raw ADC: "));
-            Serial.println(airRaw);
-
-            Serial.println(F("2. Submerge sensor tip in WATER. Press any key to record Water Raw..."));
-            while (!Serial.available()) { delay(10); }
-            while (Serial.available()) Serial.read();
-
-            MoistureReading wetRead = sensors_readMoisture();
-            int waterRaw = wetRead.rawValue;
-            Serial.print(F("Recorded Water Raw ADC: "));
-            Serial.println(waterRaw);
-
-            if (airRaw > waterRaw && waterRaw > 0) {
-                sensors_setMoistureCalibration(airRaw, waterRaw);
-                Serial.println(F("[SUCCESS] Moisture calibration stored."));
-            } else {
-                Serial.println(F("[ERROR] Invalid readings (Air Raw must be greater than Water Raw)."));
-            }
-            break;
-        }
-
         case 'o':
         case 'O':
             Serial.println(F("[CMD] Manual Lid OPEN"));
@@ -189,9 +109,36 @@ void serial_handleCommands() {
             sensors_controlLid(LID_CLOSED);
             break;
 
+        case 's':
+        case 'S':
+            Serial.print(F("{\"dev\":\""));
+            Serial.print(F(DEVICE_ID));
+            Serial.print(F("\",\"firmware\":\"2.1.0-UNO\",\"role\":\"MODULE_A_LID_CTRL\""));
+            Serial.print(F(",\"lcd_detected\":"));
+            Serial.print(lcd_isHardwareDetected() ? F("true") : F("false"));
+            Serial.println(F("}"));
+            break;
+
         case 'h':
         case 'H':
             serial_printHelp();
+            break;
+
+        case 't':
+        case 'T':
+        case 'c':
+        case 'C':
+        case 'm':
+        case 'M':
+#ifdef ENABLE_UNO_LEGACY_SENSORS
+            if (cmd == 't' || cmd == 'T') {
+                Serial.println(F("[CMD] Legacy Taring load cell..."));
+                sensors_tareWeight();
+            }
+#else
+            Serial.println(F("[INFO] Capacitive moisture (C1/C2) and load cells (LC1/LC2) reside on Module B (ESP32)."));
+            Serial.println(F("[INFO] Send calibration commands directly to the ESP32 serial interface."));
+#endif
             break;
 
         default:

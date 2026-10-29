@@ -1,6 +1,6 @@
 """
 Intelligent Waste Segregation Analytics — Model Training & Evaluation Pipeline
-Trains Anomaly Detector, Weight Forecaster, and Category Classifier on synthetic datasets.
+Trains Anomaly Detector, Multi-Channel Weight Forecaster, and Strict 2-Category Classifier.
 Evaluates chronologically on held-out sessions, records full metadata, and exports artifacts.
 """
 
@@ -27,7 +27,7 @@ def train_and_evaluate(
     random_seed: int = 42,
 ) -> Dict[str, Any]:
     """
-    Executes complete ML training and chronological evaluation workflow.
+    Executes complete ML training and chronological evaluation workflow on 4-channel telemetry.
     """
     os.makedirs(models_dir, exist_ok=True)
 
@@ -52,7 +52,6 @@ def train_and_evaluate(
     # 1. TRAIN MODEL A: SENSOR ANOMALY DETECTOR (ISOLATION FOREST)
     # -------------------------------------------------------------------------
     print("\n[TRAIN: Model A] Fitting Isolation Forest Sensor Anomaly Detector...")
-    # Train primarily on nominal/unfaulted or general training data
     anomaly_detector = SensorAnomalyDetector(contamination=0.06, random_state=random_seed)
     anomaly_detector.fit(train_df)
 
@@ -73,26 +72,32 @@ def train_and_evaluate(
     print(f"  Saved artifact to {anomaly_artifact_path}")
 
     # -------------------------------------------------------------------------
-    # 2. TRAIN MODEL B: WASTE ACCUMULATION FORECASTER (RANDOM FOREST)
+    # 2. TRAIN MODEL B: DUAL LOAD CELL WEIGHT FORECASTER (RANDOM FOREST)
     # -------------------------------------------------------------------------
-    print("\n[TRAIN: Model B] Fitting Multi-Horizon Random Forest Weight Forecaster (+5m, +15m, +30m)...")
-    forecaster = WasteAccumulationForecaster(n_estimators=100, max_depth=12, random_state=random_seed)
+    print("\n[TRAIN: Model B] Fitting Multi-Horizon Random Forest Weight Forecaster for LC1 & LC2...")
+    forecaster = WasteAccumulationForecaster(n_estimators=50, max_depth=10, random_state=random_seed)
     forecaster.fit(train_df)
 
     print("  Evaluating Forecaster on held-out test sessions (vs Persistence Baseline)...")
     forecast_metrics = forecaster.evaluate(test_df)
-    for horizon, m in forecast_metrics["horizons"].items():
-        print(f"  -> Horizon +{horizon}: Model MAE={m['model_mae_grams']}g | Baseline MAE={m['baseline_persistence_mae_grams']}g (Improvement: {m['mae_improvement_grams']}g, Beats Baseline: {m['beats_baseline']})")
+
+    print("  -- Load Cell 1 (Biodegradable) --")
+    for horizon, m in forecast_metrics["lc1"].items():
+        print(f"  -> LC1 +{horizon}: Model MAE={m['model_mae_grams']}g | Baseline={m['baseline_mae_grams']}g (Improvement: {m['mae_improvement_grams']}g, Beats Baseline: {m['beats_baseline']})")
+
+    print("  -- Load Cell 2 (Non-Biodegradable) --")
+    for horizon, m in forecast_metrics["lc2"].items():
+        print(f"  -> LC2 +{horizon}: Model MAE={m['model_mae_grams']}g | Baseline={m['baseline_mae_grams']}g (Improvement: {m['mae_improvement_grams']}g, Beats Baseline: {m['beats_baseline']})")
 
     forecaster_artifact_path = os.path.join(models_dir, "weight_forecaster.joblib")
     forecaster.save(forecaster_artifact_path)
     print(f"  Saved artifact to {forecaster_artifact_path}")
 
     # -------------------------------------------------------------------------
-    # 3. TRAIN MODEL C: EXPERIMENTAL CATEGORY CLASSIFIER
+    # 3. TRAIN MODEL C: STRICT 2-CATEGORY CLASSIFIER (PROTOTYPE)
     # -------------------------------------------------------------------------
-    print("\n[TRAIN: Model C] Fitting Experimental Category Classifier (Prototype)...")
-    classifier = ExperimentalCategoryClassifier(n_estimators=80, random_state=random_seed)
+    print("\n[TRAIN: Model C] Fitting Strict 2-Category Classifier (Biodegradable vs Non-Biodegradable)...")
+    classifier = ExperimentalCategoryClassifier(n_estimators=60, random_state=random_seed)
     classifier.fit(train_df, train_df["synthetic_category"])
 
     classifier_artifact_path = os.path.join(models_dir, "category_classifier.joblib")
@@ -103,7 +108,7 @@ def train_and_evaluate(
     # 4. EXPORT COMPREHENSIVE MODEL METADATA
     # -------------------------------------------------------------------------
     metadata: Dict[str, Any] = {
-        "model_version": "1.0.0",
+        "model_version": "2.0.0",
         "training_timestamp": datetime.now(timezone.utc).isoformat(),
         "random_seed": random_seed,
         "dataset_path": data_path,
@@ -119,18 +124,27 @@ def train_and_evaluate(
                 "metrics_on_test": anomaly_metrics,
             },
             "weight_forecaster": {
-                "algorithm": "RandomForestRegressor",
+                "algorithm": "RandomForestRegressor (Dual Channel LC1 & LC2)",
                 "artifact": "weight_forecaster.joblib",
                 "horizons": ["5m", "15m", "30m"],
-                "metrics_on_test": forecast_metrics["horizons"],
+                "metrics_on_test": {
+                    "lc1": forecast_metrics["lc1"],
+                    "lc2": forecast_metrics["lc2"],
+                    # Backwards compatible horizon keys
+                    "5m": forecast_metrics.get("5m", {}),
+                    "15m": forecast_metrics.get("15m", {}),
+                    "30m": forecast_metrics.get("30m", {})
+                },
             },
             "category_classifier": {
-                "algorithm": "RandomForestClassifier",
+                "algorithm": "RandomForestClassifier (Strict 2-Class)",
                 "artifact": "category_classifier.joblib",
+                "categories": ["BIODEGRADABLE", "NON_BIODEGRADABLE"],
                 "is_experimental": True,
                 "disclaimer": "SYNTHETIC PROFILE INFERENCE — NOT REAL-WORLD MATERIAL VERIFICATION"
             }
         },
+        "compartment_c_status": "RESERVED_FUTURE_USE — Explicitly excluded from classifier labels",
         "provenance_statement": "SYNTHETIC MODEL TEST — NOT REAL-WORLD VALIDATION"
     }
 

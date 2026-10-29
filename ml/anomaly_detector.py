@@ -1,6 +1,7 @@
 """
 Intelligent Waste Segregation Analytics — Sensor Anomaly Detection
-Isolation Forest model for numerical IoT sensor telemetry with calibrated decision boundary.
+Isolation Forest model for 4-channel numerical IoT sensor telemetry with calibrated decision boundary.
+Provides channel-level diagnostic attribution across Uno and ESP32.
 """
 
 import os
@@ -39,7 +40,7 @@ class SensorAnomalyDetector:
         self.feature_columns = FEATURE_COLUMNS
         self.online_extractor = OnlineFeatureExtractor(buffer_size=10)
 
-        # Baseline training score distribution for percentile normalization
+        # Baseline training score distribution for normalization
         self.min_score: float = -0.5
         self.max_score: float = 0.5
 
@@ -77,7 +78,6 @@ class SensorAnomalyDetector:
     def predict_scores(self, X: pd.DataFrame) -> np.ndarray:
         """
         Computes normalized anomaly scores where 0.0 is completely nominal and 1.0 is highly anomalous.
-        In sklearn IsolationForest, decision_function returns negative values for outliers.
         """
         if not self.is_fitted:
             raise RuntimeError("Model is not fitted. Load a trained model or fit first.")
@@ -85,8 +85,6 @@ class SensorAnomalyDetector:
         features = X[self.feature_columns]
         raw_scores = self.model.decision_function(features)
 
-        # Invert and normalize so higher score = higher anomaly probability
-        # Clip to [min_score, max_score]
         clipped = np.clip(raw_scores, self.min_score, self.max_score)
         norm_scores = 1.0 - (clipped - self.min_score) / max(1e-6, (self.max_score - self.min_score))
         return np.round(norm_scores, 4)
@@ -110,13 +108,13 @@ class SensorAnomalyDetector:
             "total_test_samples": len(y_test),
             "true_anomalies": int(y_true.sum()),
             "predicted_anomalies": int(preds.sum()),
-            "evaluation_provenance": "SYNTHETIC SENSOR TEST — NOT REAL-WORLD VALIDATION"
+            "evaluation_provenance": "SYNTHETIC MODEL TEST — NOT REAL-WORLD VALIDATION"
         }
 
     def predict_single(self, record: Dict[str, Any]) -> Dict[str, Any]:
         """
         Performs real-time anomaly inference for a single incoming telemetry packet.
-        Returns anomaly status, score, reasons, and provenance.
+        Provides channel-specific attribution (C1, C2, LC1, LC2, Uno, ESP32).
         """
         if not self.is_fitted:
             return {
@@ -133,21 +131,57 @@ class SensorAnomalyDetector:
         is_anomaly = score >= self.threshold
 
         reasons: List[str] = []
-        if is_anomaly:
-            # Generate rule-assisted interpretable diagnostic explanations
-            row = features_df.iloc[0]
-            if row["moist_missing"] > 0 or row["moist_ok_val"] < 1:
-                reasons.append("Moisture sensor disconnected or analog voltage outside valid limits (50–980 ADC)")
-            if row["weight_missing"] > 0 or row["weight_ok_val"] < 1:
-                reasons.append("Load cell HX711 communication timeout on digital pins D2/D3")
-            if row["dist_missing"] > 0:
-                reasons.append("HC-SR04 ultrasonic echo pulse timeout or range overflow (>200cm)")
-            if abs(row["weight_delta_1"]) > 300.0 and row["prox_val"] == 0:
-                reasons.append("Abnormal mass change without proximity detection")
-            if row["fault_count"] > 0:
-                reasons.append(f"Firmware reported {int(row['fault_count'])} active hardware fault flag(s)")
-            if not reasons:
-                reasons.append(f"Multivariate sensor vector deviates significantly from nominal distribution (isolation score: {score:.2f})")
+        attributed_channels: List[str] = []
+
+        row = features_df.iloc[0]
+
+        # Device connection attribution (Never confuse ESP32 disconnect with Uno fault)
+        if row["esp32_connected"] < 1:
+            is_anomaly = True
+            reasons.append("ESP32 Sensor Hub (Module B) disconnected or unresponsive")
+            attributed_channels.append("ESP32_LINK")
+
+        if row["uno_connected"] < 1:
+            is_anomaly = True
+            reasons.append("Arduino Uno (Module A) proximity/lid controller disconnected")
+            attributed_channels.append("UNO_LINK")
+
+        # Channel-specific hardware checks
+        if row["c1_missing"] > 0:
+            is_anomaly = True
+            reasons.append("Capacitive Sensor C1 (Biodegradable) offline or voltage out of bounds")
+            attributed_channels.append("C1")
+
+        if row["c2_missing"] > 0:
+            is_anomaly = True
+            reasons.append("Capacitive Sensor C2 (Non-Biodegradable) offline or voltage out of bounds")
+            attributed_channels.append("C2")
+
+        if row["lc1_missing"] > 0:
+            is_anomaly = True
+            reasons.append("Load Cell 1 (Compartment A) timeout on GPIO 16/4")
+            attributed_channels.append("LC1")
+
+        if row["lc2_missing"] > 0:
+            is_anomaly = True
+            reasons.append("Load Cell 2 (Compartment B) timeout on GPIO 17/18")
+            attributed_channels.append("LC2")
+
+        if abs(row["lc1_delta_1"]) > 350.0 and row["prox_val"] == 0:
+            is_anomaly = True
+            reasons.append("Abnormal mass jump on Load Cell 1 without proximity approach")
+            attributed_channels.append("LC1")
+
+        if abs(row["lc2_delta_1"]) > 350.0 and row["prox_val"] == 0:
+            is_anomaly = True
+            reasons.append("Abnormal mass jump on Load Cell 2 without proximity approach")
+            attributed_channels.append("LC2")
+
+        if row["fault_count"] > 0:
+            reasons.append(f"Firmware reported {int(row['fault_count'])} active hardware fault flag(s)")
+
+        if is_anomaly and not reasons:
+            reasons.append(f"Multivariate sensor anomaly detected (isolation score: {score:.2f})")
 
         return {
             "status": "suspected_anomaly" if is_anomaly else "normal",
@@ -155,12 +189,12 @@ class SensorAnomalyDetector:
             "anomaly_score": score,
             "calibrated_threshold": round(self.threshold, 4),
             "reasons": reasons if is_anomaly else ["Nominal sensor telemetry distribution"],
+            "attributed_channels": attributed_channels,
             "source": record.get("source", "simulation"),
             "provenance": "SYNTHETIC MODEL TEST — NOT REAL-WORLD VALIDATION"
         }
 
     def save(self, filepath: str) -> None:
-        """Saves model to a joblib artifact."""
         os.makedirs(os.path.dirname(filepath), exist_ok=True)
         payload = {
             "model": self.model,
@@ -175,7 +209,6 @@ class SensorAnomalyDetector:
 
     @classmethod
     def load(cls, filepath: str) -> "SensorAnomalyDetector":
-        """Loads model from a joblib artifact with schema validation."""
         if not os.path.exists(filepath):
             raise FileNotFoundError(f"Anomaly detector artifact not found at {filepath}")
 

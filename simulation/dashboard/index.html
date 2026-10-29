@@ -3,8 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="Intelligent Waste Segregation Analytics — Real-Time IoT Dashboard for Arduino Uno">
-  <title>Intelligent Waste Segregation Analytics — IoT Dashboard</title>
+  <meta name="description" content="Intelligent Waste Segregation Analytics — Real-Time Multi-Microcontroller IoT Dashboard (Arduino Uno & ESP32)">
+  <title>Intelligent Waste Segregation Analytics — Two-Page IoT Dashboard</title>
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
@@ -12,15 +12,30 @@
     <!-- Header -->
     <header class="app-header">
       <div class="brand-group">
-        <div class="brand-symbol">♻</div>
+        <div class="brand-symbol" aria-hidden="true">♻</div>
         <div class="brand-text">
           <h1>Intelligent Waste Segregation Analytics</h1>
+          <p id="system-subtitle">Multi-Microcontroller IoT Architecture • Module A (Uno) & Module B (ESP32)</p>
         </div>
       </div>
+
+      <!-- Navigation Tabs & Mode Controls -->
       <div class="header-status-group">
-        <!-- Compact Monitoring Mode Toggle -->
-        <div class="mode-control-container" title="Toggle between Live Hardware (Arduino Uno) and Synthetic Simulation (Space/Enter)">
-          <span class="mode-control-label" id="mode-control-label">Monitoring Mode</span>
+        <!-- Two-Page Primary Navigation -->
+        <nav class="nav-page-group" role="tablist" aria-label="Dashboard Views">
+          <button class="nav-tab-btn active" id="tab-overview" role="tab" aria-selected="true" aria-controls="view-overview" tabindex="0">
+            <span class="nav-tab-icon">📊</span>
+            <span>Overview</span>
+          </button>
+          <button class="nav-tab-btn" id="tab-operations" role="tab" aria-selected="false" aria-controls="view-operations" tabindex="0">
+            <span class="nav-tab-icon">⚙</span>
+            <span>Technical Operations</span>
+          </button>
+        </nav>
+
+        <!-- Compact Monitoring Mode Toggle Switch -->
+        <div class="mode-control-container" title="Toggle between Live Hardware and Synthetic Simulation (Space/Enter)">
+          <span class="mode-control-label" id="mode-control-label">Mode</span>
           <div class="mode-toggle-pill" 
                id="mode-toggle-switch" 
                role="switch" 
@@ -28,7 +43,7 @@
                aria-labelledby="mode-control-label"
                tabindex="0">
             <span class="mode-toggle-opt opt-live active" id="mode-opt-live">
-              <span class="mode-dot">●</span> LIVE HARDWARE
+              <span class="mode-dot">●</span> LIVE
             </span>
             <span class="mode-toggle-opt opt-sim" id="mode-opt-sim">
               <span class="mode-dot">●</span> SIMULATION
@@ -36,21 +51,23 @@
           </div>
         </div>
 
-        <div class="dual-device-badges" style="display: flex; gap: 8px;">
-          <div id="uno-conn-badge" class="badge-status connecting" title="Module A: Arduino Uno (Proximity & Lid)">
+        <!-- Independent Device Health Badges in Header -->
+        <div class="dual-device-badges">
+          <div id="uno-conn-badge" class="badge-status connecting" title="Module A: Arduino Uno (HC-SR04 & Autonomous Lid Servo)">
             <span class="status-indicator-dot"></span>
             <span id="uno-conn-text">Uno: Offline</span>
           </div>
-          <div id="esp-conn-badge" class="badge-status connecting" title="Module B: ESP32 (Moisture & Load Cell)">
+          <div id="esp-conn-badge" class="badge-status connecting" title="Module B: ESP32 Hub (C1, C2, LC1, LC2)">
             <span class="status-indicator-dot"></span>
             <span id="esp-conn-text">ESP32: Offline</span>
           </div>
         </div>
-        <button id="btn-webserial" class="btn-header" title="Connect directly to Arduino Uno via Web Serial">
-          <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+
+        <button id="btn-webserial" class="btn-header" title="Connect directly to Arduino Uno via Web Serial (Chrome/Edge)">
+          <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24" aria-hidden="true">
             <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
           </svg>
-          <span id="btn-webserial-text">Direct USB Serial</span>
+          <span id="btn-webserial-text">USB Serial</span>
         </button>
       </div>
     </header>
@@ -62,11 +79,11 @@
         <span id="mode-banner-title">LIVE HARDWARE MODE</span>
       </div>
       <div class="mode-banner-details" id="mode-banner-details">
-        <span id="mode-banner-desc">Receiving multi-microcontroller telemetry from Arduino Uno (Module A) & ESP32 (Module B).</span>
-        <span id="mode-banner-subdesc" class="mode-banner-subdesc">Awaiting device connections or switch to Simulation Mode.</span>
+        <span id="mode-banner-desc">Streaming live telemetry from Arduino Uno (Module A) & ESP32 (Module B).</span>
+        <span id="mode-banner-subdesc" class="mode-banner-subdesc">All measurements reflect physical sensor voltages and load cell strain gauges.</span>
       </div>
       <div class="mode-banner-meta" id="mode-banner-meta">
-        <span class="meta-item-label">Data Provenance:</span>
+        <span class="meta-item-label">Data Source:</span>
         <span class="meta-item-value" id="mode-banner-source">HARDWARE</span>
       </div>
     </div>
@@ -74,27 +91,31 @@
     <!-- Simulation Controls Panel (Visible strictly when Simulation Mode is active) -->
     <div id="simulation-controls" class="sim-controls-card" style="display: none;" role="region" aria-label="Simulation Controls">
       <div class="sim-controls-header">
-        <span class="sim-controls-title">⚙ MULTI-DEVICE SYNTHETIC TELEMETRY GENERATOR</span>
-        <span class="sim-isolation-tag">PROVENANCE: SIMULATION • HARDWARE PROTECTED</span>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="sim-controls-title">⚙ MULTI-DEVICE SYNTHETIC TELEMETRY GENERATOR</span>
+          <span class="badge-pill sim-badge">4 CHANNELS • 2 ACTIVE BINS</span>
+        </div>
+        <span class="sim-isolation-tag">PROVENANCE: SIMULATION • PHYSICAL ACTUATORS PROTECTED</span>
       </div>
       <div class="sim-controls-body">
         <div class="sim-control-item">
           <label for="sim-scenario-select">Simulation Scenario:</label>
           <select id="sim-scenario-select" class="form-select sim-select">
-            <option value="SCENARIO_A">Scenario A: Both Devices Online (Nominal Operation)</option>
-            <option value="SCENARIO_B">Scenario B: Bin Filling (Active Mass & Moisture Accumulation)</option>
-            <option value="SCENARIO_C">Scenario C: Module A (Uno) Online, Module B (ESP32) Disconnected</option>
-            <option value="SCENARIO_D">Scenario D: Module B (ESP32) Online, Module A (Uno) Disconnected</option>
-            <option value="SCENARIO_E">Scenario E: Sensor Faults & Telemetry Interruption</option>
+            <option value="SCENARIO_A">Scenario A: Nominal Multi-MCU Operation (Both Devices Online)</option>
+            <option value="SCENARIO_B">Scenario B: Bin 1 Filling (Active Biodegradable Mass & Moisture)</option>
+            <option value="SCENARIO_C">Scenario C: Bin 2 Filling (Active Non-Biodegradable Mass)</option>
+            <option value="SCENARIO_D">Scenario D: Module A (Uno) Online, Module B (ESP32) Offline</option>
+            <option value="SCENARIO_E">Scenario E: Module B (ESP32) Online, Module A (Uno) Offline</option>
+            <option value="SCENARIO_F">Scenario F: Calibration Warning & Communications Noise</option>
           </select>
         </div>
 
         <div class="sim-control-item">
-          <label for="sim-speed-select">Update Interval:</label>
+          <label for="sim-speed-select">Update Rate:</label>
           <select id="sim-speed-select" class="form-select sim-select">
-            <option value="1000">1.0s (Nominal)</option>
+            <option value="1000">1.0s (Nominal 1Hz)</option>
             <option value="2000">2.0s (Relaxed)</option>
-            <option value="500">0.5s (Fast)</option>
+            <option value="500">0.5s (High Speed)</option>
           </select>
         </div>
 
@@ -115,506 +136,806 @@
       </div>
     </div>
 
-    <!-- System Health & Connectivity Strip -->
-    <section class="health-strip">
-      <div class="health-metrics">
-        <div class="health-item">
-          <span class="health-label">Arduino Uno (Module A)</span>
-          <span class="health-val" id="val-uno-status">DISCONNECTED</span>
+    <!-- ===================================================================== -->
+    <!-- PAGE 1: OVERVIEW DASHBOARD VIEW (#view-overview)                      -->
+    <!-- ===================================================================== -->
+    <main id="view-overview" class="page-view active" role="tabpanel" aria-labelledby="tab-overview">
+
+      <!-- Top Summary Metrics Banner -->
+      <section class="summary-metrics-strip" aria-label="System Summary Metrics">
+        <div class="metric-summary-card">
+          <span class="summary-label">Total Measured Waste</span>
+          <div class="summary-value-wrap">
+            <span class="summary-value" id="val-total-weight">—</span>
+            <span class="summary-unit" id="unit-total-weight">kg</span>
+          </div>
+          <span class="summary-sub" id="sub-total-weight">Sum of Compartments A & B</span>
         </div>
-        <div class="health-item">
-          <span class="health-label">ESP32 Hub (Module B)</span>
-          <span class="health-val" id="val-esp-status">DISCONNECTED</span>
+
+        <div class="metric-summary-card">
+          <span class="summary-label">Lid Actuator State</span>
+          <div class="summary-value-wrap">
+            <span class="summary-value" id="val-summary-lid">CLOSED</span>
+          </div>
+          <span class="summary-sub" id="sub-summary-lid">Commanded by Arduino Uno</span>
         </div>
-        <div class="health-item">
-          <span class="health-label">Uno Last Packet</span>
-          <span class="health-val" id="val-uno-last">Never</span>
+
+        <div class="metric-summary-card">
+          <span class="summary-label">Hardware Link Status</span>
+          <div class="summary-value-wrap">
+            <span class="summary-value" id="val-summary-devices">0 / 2 Online</span>
+          </div>
+          <span class="summary-sub" id="sub-summary-devices">Uno (Lid) & ESP32 (Sensors)</span>
         </div>
-        <div class="health-item">
-          <span class="health-label">ESP32 Last Packet</span>
-          <span class="health-val" id="val-esp-last">Never</span>
+
+        <div class="metric-summary-card">
+          <span class="summary-label">Active Diagnostics</span>
+          <div class="summary-value-wrap">
+            <span class="summary-value" id="val-summary-warnings">0 Warnings</span>
+          </div>
+          <span class="summary-sub" id="sub-summary-warnings">System nominal</span>
         </div>
-        <div class="health-item">
-          <span class="health-label">Active Faults</span>
-          <span class="health-val" id="val-fault-count">0</span>
+
+        <div class="metric-summary-card">
+          <span class="summary-label">Last System Update</span>
+          <div class="summary-value-wrap">
+            <span class="summary-value" id="val-summary-last-update" style="font-size: 1.1rem;">Waiting</span>
+          </div>
+          <span class="summary-sub" id="sub-summary-update">Live polling active</span>
         </div>
-      </div>
-      <div class="hardware-spec-badge">
-        Dual Controller • Uno (D4-D6) • ESP32 (ADC1 34, 16/4)
-      </div>
-    </section>
+      </section>
 
-    <!-- Live Sensor Telemetry Cards -->
-    <section>
-      <div class="section-title">
-        <span id="sensor-section-title">Live Sensor Telemetry</span>
-        <span id="sensor-section-subtitle" style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
-          Independent Microcontroller Streams
-        </span>
-      </div>
-
-      <div class="sensor-grid">
-        <!-- 1. Capacitive Moisture Sensor (Module B: ESP32) -->
-        <article class="sensor-card" id="card-moisture">
-          <div class="card-header">
-            <div class="sensor-title-group">
-              <h3>Capacitive Soil Moisture</h3>
-              <span class="sensor-pin-label">Module B: ESP32 • ADC1 Pin 34</span>
-            </div>
-            <span class="card-pill uncalibrated" id="moist-status-pill">AWAITING</span>
-          </div>
-          <div class="card-main-metric">
-            <div class="metric-number-group">
-              <span class="metric-value" id="moist-val">—</span>
-              <span class="metric-unit" id="moist-unit">%</span>
-            </div>
-            <p class="metric-subtext" id="moist-subtext">Awaiting ESP32 sensor stream</p>
-          </div>
-          <div class="card-meta-list">
-            <div class="meta-row">
-              <span class="meta-label">Raw 12-Bit ADC</span>
-              <span class="meta-val" id="moist-raw-adc">—</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Calibration State</span>
-              <span class="meta-val" id="moist-calib-state">Uncalibrated</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Valid Range</span>
-              <span class="meta-val">200 – 3950 ADC</span>
-            </div>
-          </div>
-        </article>
-
-        <!-- 2. Load Cell & HX711 (Module B: ESP32) -->
-        <article class="sensor-card" id="card-weight">
-          <div class="card-header">
-            <div class="sensor-title-group">
-              <h3>Load Cell + HX711</h3>
-              <span class="sensor-pin-label">Module B: ESP32 • GPIO 16 (DOUT), 4 (SCK)</span>
-            </div>
-            <span class="card-pill uncalibrated" id="weight-status-pill">AWAITING</span>
-          </div>
-          <div class="card-main-metric">
-            <div class="metric-number-group">
-              <span class="metric-value" id="weight-val">—</span>
-              <span class="metric-unit">g</span>
-            </div>
-            <p class="metric-subtext" id="weight-subtext">Awaiting ESP32 sensor stream</p>
-          </div>
-          <div class="card-meta-list">
-            <div class="meta-row">
-              <span class="meta-label">Raw HX711 Counts</span>
-              <span class="meta-val" id="weight-raw-counts">—</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Calibration Factor</span>
-              <span class="meta-val" id="weight-calib-state">Required</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Zero / Tare Offset</span>
-              <span class="meta-val" id="weight-tare-state">—</span>
-            </div>
-          </div>
-        </article>
-
-        <!-- 3. Ultrasonic Proximity Sensor (Module A: Arduino Uno) -->
-        <article class="sensor-card" id="card-proximity">
-          <div class="card-header">
-            <div class="sensor-title-group">
-              <h3>Ultrasonic Proximity</h3>
-              <span class="sensor-pin-label">Module A: Arduino Uno • D4 (TRIG), D5 (ECHO)</span>
-            </div>
-            <span class="card-pill uncalibrated" id="prox-status-pill">AWAITING</span>
-          </div>
-          <div class="card-main-metric">
-            <div class="metric-number-group">
-              <span class="metric-value" id="prox-val">—</span>
-              <span class="metric-unit">cm</span>
-            </div>
-            <p class="metric-subtext" id="prox-subtext">Target threshold: ≤ 20.0 cm</p>
-          </div>
-          <div class="card-meta-list">
-            <div class="meta-row">
-              <span class="meta-label">Object Detected</span>
-              <span class="meta-val" id="prox-detected">—</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Trigger Window</span>
-              <span class="meta-val">2.0 – 20.0 cm</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Echo Response</span>
-              <span class="meta-val" id="prox-echo-health">—</span>
-            </div>
-          </div>
-        </article>
-
-        <!-- 4. Automatic Lid Actuator (Module A: Arduino Uno) -->
-        <article class="sensor-card" id="card-lid">
-          <div class="card-header">
-            <div class="sensor-title-group">
-              <h3>Lid Actuator Status</h3>
-              <span class="sensor-pin-label">Module A: Arduino Uno • PWM Pin D6</span>
-            </div>
-            <span class="card-pill uncalibrated" id="lid-status-pill">CLOSED</span>
-          </div>
-          <div class="card-main-metric">
-            <div class="metric-number-group">
-              <span class="metric-value" id="lid-val">CLOSED</span>
-            </div>
-            <p class="metric-subtext" id="lid-subtext">Commanded state: 0° servo angle</p>
-          </div>
-          <div class="card-meta-list">
-            <div class="meta-row">
-              <span class="meta-label">Autonomous Safety</span>
-              <span class="meta-val" style="color: var(--accent-forest); font-weight: 600;">Hardware-Safe Loop</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Hold Open Duration</span>
-              <span class="meta-val">4000 ms</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Debounce / Cooldown</span>
-              <span class="meta-val">Active (1.5s)</span>
-            </div>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <!-- Sensor-Based Machine Learning Analytics Section -->
-    <section class="ml-analytics-section" id="ml-analytics-section" aria-label="Sensor Machine Learning Analytics">
-      <div class="section-title">
-        <div style="display: flex; align-items: center; gap: 10px;">
-          <span style="font-size: 1.1rem; font-weight: 700; color: var(--text-main);">Sensor Machine Learning Analytics</span>
-          <span class="ml-badge-model">Dual Numerical ML Pipeline</span>
+      <!-- Device Health Summary Cards (Uno & ESP32) -->
+      <section class="device-health-summary-section" aria-label="Microcontroller Health Summary">
+        <div class="section-title">
+          <span>Microcontroller Health & Link Status</span>
+          <span class="section-subtitle">Independent Dual-Device Heartbeats</span>
         </div>
-        <div class="ml-provenance-tag-wrap">
-          <span class="ml-disclaimer-tag">SYNTHETIC MODEL TEST — NOT REAL-WORLD VALIDATION</span>
+
+        <div class="device-health-cards-grid">
+          <!-- Device Card A: Arduino Uno -->
+          <article class="device-card" id="devcard-uno">
+            <div class="device-card-header">
+              <div class="device-title-wrap">
+                <span class="device-badge-icon">⚡</span>
+                <div>
+                  <h3>Module A: Arduino Uno R3</h3>
+                  <p class="device-subtitle">Proximity Detection & Autonomous Lid Servo</p>
+                </div>
+              </div>
+              <span class="card-pill uncalibrated" id="uno-health-pill">OFFLINE</span>
+            </div>
+
+            <div class="device-card-body">
+              <div class="device-stat-row">
+                <span class="stat-name">Connection State</span>
+                <span class="stat-val" id="uno-state-desc">Waiting for USB Serial packet</span>
+              </div>
+              <div class="device-stat-row">
+                <span class="stat-name">Current Ultrasonic Distance</span>
+                <span class="stat-val" id="uno-dist-desc">— cm (Threshold: ≤ 20.0 cm)</span>
+              </div>
+              <div class="device-stat-row">
+                <span class="stat-name">Proximity Detected</span>
+                <span class="stat-val" id="uno-prox-desc">No</span>
+              </div>
+              <div class="device-stat-row">
+                <span class="stat-name">Commanded Lid Angle</span>
+                <span class="stat-val" id="uno-lid-desc">0° (CLOSED)</span>
+              </div>
+              <div class="device-stat-row">
+                <span class="stat-name">Last Received Telemetry</span>
+                <span class="stat-val" id="uno-last-seen">Never</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- Device Card B: ESP32 Sensor Hub -->
+          <article class="device-card" id="devcard-esp32">
+            <div class="device-card-header">
+              <div class="device-title-wrap">
+                <span class="device-badge-icon">📡</span>
+                <div>
+                  <h3>Module B: ESP32 DevKit V1</h3>
+                  <p class="device-subtitle">4-Channel Waste Properties Hub (C1, C2, LC1, LC2)</p>
+                </div>
+              </div>
+              <span class="card-pill uncalibrated" id="esp32-health-pill">OFFLINE</span>
+            </div>
+
+            <div class="device-card-body">
+              <div class="device-stat-row">
+                <span class="stat-name">Connection State</span>
+                <span class="stat-val" id="esp32-state-desc">Waiting for ESP32 telemetry packet</span>
+              </div>
+              <div class="device-stat-row">
+                <span class="stat-name">Moisture Channels (C1 / C2)</span>
+                <span class="stat-val" id="esp32-moist-health">C1: Offline • C2: Offline</span>
+              </div>
+              <div class="device-stat-row">
+                <span class="stat-name">Mass Channels (LC1 / LC2)</span>
+                <span class="stat-val" id="esp32-mass-health">LC1: Offline • LC2: Offline</span>
+              </div>
+              <div class="device-stat-row">
+                <span class="stat-name">Calibration Validity</span>
+                <span class="stat-val" id="esp32-calib-summary">Dual-point calibration required</span>
+              </div>
+              <div class="device-stat-row">
+                <span class="stat-name">Last Received Telemetry</span>
+                <span class="stat-val" id="esp32-last-seen">Never</span>
+              </div>
+            </div>
+          </article>
         </div>
-      </div>
+      </section>
 
-      <!-- ML Metrics & Cards Grid -->
-      <div class="sensor-grid ml-cards-grid">
-        <!-- ML Card 1: Sensor Anomaly Detection (Isolation Forest) -->
-        <article class="sensor-card ml-card" id="ml-card-anomaly">
-          <div class="card-header">
-            <div class="sensor-title-group">
-              <h3>Sensor Anomaly Detection</h3>
-              <span class="sensor-pin-label">Model A: Isolation Forest (Numerical)</span>
-            </div>
-            <span class="card-pill ok" id="ml-anomaly-pill">NORMAL</span>
-          </div>
+      <!-- Three Compartment Cards (2 Active + 1 Reserved) -->
+      <section class="compartments-section" aria-label="Waste Compartment Status">
+        <div class="section-title">
+          <span>Three Physical Bin Compartments</span>
+          <span class="section-subtitle">2 Active Segregation Bins & 1 Reserved Inactive Bin</span>
+        </div>
 
-          <div class="card-main-metric">
-            <div class="metric-number-group">
-              <span class="metric-value" id="ml-anomaly-score">—</span>
-              <span class="metric-unit">/ 1.0</span>
+        <div class="compartments-grid">
+          <!-- Compartment A: Biodegradable Waste -->
+          <article class="compartment-card active-compartment bio-theme" id="comp-card-a">
+            <div class="comp-header">
+              <div class="comp-badge-group">
+                <span class="comp-dot bio-dot">●</span>
+                <div>
+                  <h3>Compartment A: Biodegradable Waste</h3>
+                  <span class="comp-sensor-tags">Sensors: Moisture C1 • Load Cell 1</span>
+                </div>
+              </div>
+              <span class="card-pill ok" id="comp-a-status-pill">ACTIVE BIN</span>
             </div>
-            <p class="metric-subtext" id="ml-anomaly-subtext">Calibrated threshold: 0.5600</p>
-          </div>
 
-          <!-- Anomaly Score Progress Bar -->
-          <div class="category-progress-bar" style="margin-bottom: 14px;">
-            <div class="category-progress-fill" id="ml-anomaly-bar" style="width: 0%; background-color: var(--accent-forest);"></div>
-          </div>
+            <div class="comp-metrics-row">
+              <div class="comp-metric-box">
+                <span class="metric-caption">Soil Moisture (C1)</span>
+                <div class="metric-digits">
+                  <span class="metric-val" id="comp-a-moist-val">—</span>
+                  <span class="metric-unit">%</span>
+                </div>
+                <span class="metric-hint" id="comp-a-moist-desc">Awaiting sensor reading</span>
+              </div>
 
-          <div class="card-meta-list">
-            <div class="meta-row">
-              <span class="meta-label">Diagnostic Status</span>
-              <span class="meta-val" id="ml-anomaly-status-text">Nominal telemetry distribution</span>
+              <div class="comp-metric-box">
+                <span class="metric-caption">Mass Measurement (LC1)</span>
+                <div class="metric-digits">
+                  <span class="metric-val" id="comp-a-weight-val">—</span>
+                  <span class="metric-unit">g</span>
+                </div>
+                <span class="metric-hint" id="comp-a-weight-desc">Awaiting load cell</span>
+              </div>
             </div>
-            <div class="meta-row">
-              <span class="meta-label">Evaluation Metric (Test)</span>
-              <span class="meta-val" id="ml-anomaly-f1">F1: 62.6% (P: 65.2%, R: 60.2%)</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Data Provenance</span>
-              <span class="meta-val" id="ml-anomaly-provenance" style="font-weight: 600; color: var(--accent-teal);">SIMULATION</span>
-            </div>
-          </div>
-        </article>
 
-        <!-- ML Card 2: Waste Accumulation Forecaster (Random Forest) -->
-        <article class="sensor-card ml-card" id="ml-card-forecast">
-          <div class="card-header">
-            <div class="sensor-title-group">
-              <h3>Waste Mass Forecasting</h3>
-              <span class="sensor-pin-label">Model B: Multi-Horizon Random Forest</span>
+            <div class="comp-footer">
+              <div class="comp-footer-item">
+                <span class="footer-label">Sensor Health:</span>
+                <span class="footer-val" id="comp-a-health">Offline</span>
+              </div>
+              <div class="comp-footer-item">
+                <span class="footer-label">Calibration:</span>
+                <span class="footer-val" id="comp-a-calib">Uncalibrated</span>
+              </div>
+              <div class="comp-footer-item">
+                <span class="footer-label">5m Forecast:</span>
+                <span class="footer-val" id="comp-a-trend">Awaiting data</span>
+              </div>
             </div>
-            <div class="ml-horizon-selector" role="group" aria-label="Forecast horizon selection">
-              <button class="btn-horizon active" id="btn-horizon-5m" data-horizon="5m">+5m</button>
-              <button class="btn-horizon" id="btn-horizon-15m" data-horizon="15m">+15m</button>
-              <button class="btn-horizon" id="btn-horizon-30m" data-horizon="30m">+30m</button>
-            </div>
-          </div>
+          </article>
 
-          <div class="card-main-metric">
-            <div class="metric-number-group">
-              <span class="metric-value" id="ml-forecast-val">—</span>
-              <span class="metric-unit">g</span>
+          <!-- Compartment B: Non-Biodegradable Waste -->
+          <article class="compartment-card active-compartment nonbio-theme" id="comp-card-b">
+            <div class="comp-header">
+              <div class="comp-badge-group">
+                <span class="comp-dot nonbio-dot">●</span>
+                <div>
+                  <h3>Compartment B: Non-Biodegradable Waste</h3>
+                  <span class="comp-sensor-tags">Sensors: Moisture C2 • Load Cell 2</span>
+                </div>
+              </div>
+              <span class="card-pill ok" id="comp-b-status-pill">ACTIVE BIN</span>
             </div>
-            <p class="metric-subtext" id="ml-forecast-subtext">95% Confidence Interval: [— – —]</p>
-          </div>
 
-          <div class="card-meta-list">
-            <div class="meta-row">
-              <span class="meta-label">Current Weight</span>
-              <span class="meta-val" id="ml-forecast-current">— g</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Projected Mass Delta</span>
-              <span class="meta-val" id="ml-forecast-delta">—</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Persistence Baseline</span>
-              <span class="meta-val" id="ml-forecast-baseline">— g</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Test MAE (vs Baseline)</span>
-              <span class="meta-val" id="ml-forecast-benchmark">808.7g (vs 1069.7g | Beats Baseline)</span>
-            </div>
-          </div>
-        </article>
+            <div class="comp-metrics-row">
+              <div class="comp-metric-box">
+                <span class="metric-caption">Soil Moisture (C2)</span>
+                <div class="metric-digits">
+                  <span class="metric-val" id="comp-b-moist-val">—</span>
+                  <span class="metric-unit">%</span>
+                </div>
+                <span class="metric-hint" id="comp-b-moist-desc">Awaiting sensor reading</span>
+              </div>
 
-        <!-- ML Card 3: Model Lifecycle & System Health -->
-        <article class="sensor-card ml-card" id="ml-card-lifecycle">
-          <div class="card-header">
-            <div class="sensor-title-group">
-              <h3>ML Model Registry</h3>
-              <span class="sensor-pin-label">Artifact Status & Provenance</span>
+              <div class="comp-metric-box">
+                <span class="metric-caption">Mass Measurement (LC2)</span>
+                <div class="metric-digits">
+                  <span class="metric-val" id="comp-b-weight-val">—</span>
+                  <span class="metric-unit">g</span>
+                </div>
+                <span class="metric-hint" id="comp-b-weight-desc">Awaiting load cell</span>
+              </div>
             </div>
-            <span class="card-pill ok" id="ml-service-pill">MODELS LOADED</span>
-          </div>
 
-          <div class="card-main-metric">
-            <div class="metric-number-group" style="font-size: 1.4rem;">
-              <span class="metric-value" id="ml-registry-version" style="font-size: 1.4rem;">v1.0.0</span>
+            <div class="comp-footer">
+              <div class="comp-footer-item">
+                <span class="footer-label">Sensor Health:</span>
+                <span class="footer-val" id="comp-b-health">Offline</span>
+              </div>
+              <div class="comp-footer-item">
+                <span class="footer-label">Calibration:</span>
+                <span class="footer-val" id="comp-b-calib">Uncalibrated</span>
+              </div>
+              <div class="comp-footer-item">
+                <span class="footer-label">5m Forecast:</span>
+                <span class="footer-val" id="comp-b-trend">Awaiting data</span>
+              </div>
             </div>
-            <p class="metric-subtext" id="ml-registry-subtext">Trained on 24,200 synthetic records (Seed: 42)</p>
-          </div>
+          </article>
 
-          <div class="card-meta-list">
-            <div class="meta-row">
-              <span class="meta-label">Anomaly Detector</span>
-              <span class="meta-val" id="ml-meta-detector">IsolationForest (models/anomaly_detector.joblib)</span>
+          <!-- Compartment C: Reserved / Future Use -->
+          <article class="compartment-card reserved-compartment" id="comp-card-c">
+            <div class="comp-header">
+              <div class="comp-badge-group">
+                <span class="comp-dot reserved-dot">○</span>
+                <div>
+                  <h3>Compartment C: Reserved / Future Use</h3>
+                  <span class="comp-sensor-tags">No sensors assigned</span>
+                </div>
+              </div>
+              <span class="card-pill neutral" id="comp-c-status-pill">NOT CONFIGURED</span>
             </div>
-            <div class="meta-row">
-              <span class="meta-label">Weight Forecaster</span>
-              <span class="meta-val" id="ml-meta-forecaster">RandomForest (models/weight_forecaster.joblib)</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Microservice Status</span>
-              <span class="meta-val" id="ml-service-status-text">Online (FastAPI / 127.0.0.1:8000)</span>
-            </div>
-            <div class="meta-row">
-              <span class="meta-label">Physical Constraints</span>
-              <span class="meta-val">Bounded: 0.0g to 10,000.0g</span>
-            </div>
-          </div>
-        </article>
-      </div>
 
-      <!-- Explanatory Context Alert -->
-      <div class="alert-row info" style="margin-bottom: 24px; font-size: 0.8rem; background-color: var(--bg-surface); border: 1px solid var(--border-light); padding: 12px 16px; border-radius: var(--radius-md);">
-        <span style="font-weight: bold; color: var(--accent-amber);">ℹ NOTICE:</span>
-        <span style="color: var(--text-muted);">
-          Anomaly score is an uncalibrated isolation distance metric; higher scores reflect multivariate statistical deviation from nominal training profiles.
-          Evaluation benchmarks are evaluated strictly on synthetic test sessions and do NOT represent physical hardware certification.
-        </span>
-      </div>
-    </section>
+            <div class="reserved-placeholder-body">
+              <div class="reserved-icon">🔒</div>
+              <h4>Reserved for Future Hardware Expansion</h4>
+              <p>This physical compartment has no active sensors assigned in the current firmware. Zero values and fake history are intentionally suppressed.</p>
+            </div>
 
-    <!-- Two Waste Categories Section -->
-    <section>
-      <div class="section-title">
-        <span>Dual Waste Category Analytics</span>
-        <span style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
-          Calculated Strictly from Verified Recorded Events
-        </span>
-      </div>
+            <div class="comp-footer reserved-footer">
+              <div class="comp-footer-item" style="width: 100%; text-align: center;">
+                <span class="footer-label">Status:</span>
+                <span class="footer-val" style="color: var(--text-dim);">Inactive • Excluded from weight totals</span>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
 
-      <div class="categories-container">
-        <!-- Category 1: Biodegradable -->
-        <article class="category-card bio">
-          <div class="category-card-header">
-            <div class="category-badge-tag">
-              <span>●</span>
-              <h3>Biodegradable Waste</h3>
-            </div>
-            <span class="card-pill ok">Category 1</span>
-          </div>
-          <div class="category-stats-row">
-            <div class="category-stat-item">
-              <h4 id="cat-bio-count">0</h4>
-              <span>Recorded Events</span>
-            </div>
-            <div class="category-stat-item">
-              <h4 id="cat-bio-pct">0%</h4>
-              <span>Distribution</span>
-            </div>
-            <div class="category-stat-item">
-              <h4 id="cat-bio-weight">0.0 kg</h4>
-              <span>Total Mass</span>
-            </div>
-          </div>
-          <div class="category-progress-bar">
-            <div class="category-progress-fill" id="cat-bio-bar" style="width: 0%;"></div>
-          </div>
-          <p style="font-size: 0.8rem; color: var(--text-muted);">
-            Organic matter, food scraps, compostable material. High moisture content.
-          </p>
-        </article>
+      <!-- Overview Charts Section (Mass & Moisture over time) -->
+      <section class="overview-charts-section" aria-label="Sensor Trends">
+        <div class="section-title">
+          <span>Live Historical Sensor Trends</span>
+          <span class="section-subtitle">Real-Time Measurements (LC1 vs LC2 & C1 vs C2)</span>
+        </div>
 
-        <!-- Category 2: Non-Biodegradable -->
-        <article class="category-card nonbio">
-          <div class="category-card-header">
-            <div class="category-badge-tag">
-              <span>●</span>
-              <h3>Non-Biodegradable Waste</h3>
+        <div class="charts-grid">
+          <!-- Weight History Chart -->
+          <article class="chart-card">
+            <div class="chart-header">
+              <h4>Bin Mass Measurements (Grams)</h4>
+              <div class="chart-legend">
+                <span class="legend-item"><span class="legend-color-box bio"></span> LC1 (Biodegradable)</span>
+                <span class="legend-item"><span class="legend-color-box nonbio"></span> LC2 (Non-Biodegradable)</span>
+              </div>
             </div>
-            <span class="card-pill uncalibrated">Category 2</span>
-          </div>
-          <div class="category-stats-row">
-            <div class="category-stat-item">
-              <h4 id="cat-nonbio-count">0</h4>
-              <span>Recorded Events</span>
+            <div class="chart-canvas-wrap" id="chart-weight-wrap">
+              <span class="chart-empty-text">Awaiting sensor data points...</span>
             </div>
-            <div class="category-stat-item">
-              <h4 id="cat-nonbio-pct">0%</h4>
-              <span>Distribution</span>
-            </div>
-            <div class="category-stat-item">
-              <h4 id="cat-nonbio-weight">0.0 kg</h4>
-              <span>Total Mass</span>
-            </div>
-          </div>
-          <div class="category-progress-bar">
-            <div class="category-progress-fill" id="cat-nonbio-bar" style="width: 0%;"></div>
-          </div>
-          <p style="font-size: 0.8rem; color: var(--text-muted);">
-            Inorganic material, metals, plastics, dry composites, packaging.
-          </p>
-        </article>
-      </div>
+          </article>
 
-      <!-- Quick Classification Logging Form -->
-      <div class="classification-entry-box">
-        <h4 style="font-size: 0.92rem; font-weight: 700; color: var(--text-main);">
-          Record Verified Waste Segregation Event
-        </h4>
-        <p style="font-size: 0.8rem; color: var(--text-muted);">
-          Associate the active physical sensor reading with a verified classification record.
-        </p>
-        <div class="entry-form-row">
-          <select id="select-category" class="form-select">
-            <option value="BIODEGRADABLE">Biodegradable Waste</option>
-            <option value="NON_BIODEGRADABLE">Non-Biodegradable Waste</option>
-          </select>
-          <input type="text" id="input-item-notes" class="form-input" placeholder="Item description (e.g. Fruit peel, Plastic bottle)" style="flex: 1; min-width: 200px;">
-          <button id="btn-submit-classification" class="btn-header primary">
-            Log Genuine Event
+          <!-- Moisture History Chart -->
+          <article class="chart-card">
+            <div class="chart-header">
+              <h4>Soil Moisture Readings (%)</h4>
+              <div class="chart-legend">
+                <span class="legend-item"><span class="legend-color-box bio"></span> C1 (Biodegradable)</span>
+                <span class="legend-item"><span class="legend-color-box nonbio"></span> C2 (Non-Biodegradable)</span>
+              </div>
+            </div>
+            <div class="chart-canvas-wrap" id="chart-moisture-wrap">
+              <span class="chart-empty-text">Awaiting sensor data points...</span>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- Plain-English Alerts & Simple ML Insights -->
+      <section class="insights-alerts-section">
+        <div class="insights-grid">
+          <!-- System Alerts Card -->
+          <article class="data-card alerts-panel-card">
+            <div class="section-title" style="margin-bottom: 12px;">
+              <span>System Alerts & Advisories</span>
+              <span class="card-pill ok" id="overview-alerts-pill">NORMAL</span>
+            </div>
+            <div class="alerts-list" id="overview-alerts-list">
+              <div class="alert-row info">
+                <span>ℹ</span>
+                <span>System running nominal. Awaiting live sensor packet ingestion.</span>
+              </div>
+            </div>
+          </article>
+
+          <!-- Simple ML Insights Card -->
+          <article class="data-card ml-summary-card">
+            <div class="section-title" style="margin-bottom: 12px;">
+              <span>Predictive & Operational Insights</span>
+              <span class="badge-pill ml-badge" id="ml-insight-pill">ML READY</span>
+            </div>
+            <div class="ml-plain-insights-body">
+              <p class="ml-insight-text" id="ml-plain-summary">
+                Awaiting active sensor telemetry stream to evaluate waste trends and anomaly probability.
+              </p>
+              <div class="ml-insight-footer">
+                <span class="ml-disclaimer-small" id="ml-insight-provenance">
+                  PROVENANCE: SYNTHETIC MODEL TEST — NOT REAL-WORLD VALIDATION
+                </span>
+              </div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- Lid Activity History Table -->
+      <section class="data-card">
+        <div class="section-title" style="margin-bottom: 0;">
+          <span>Recent Lid Proximity Events</span>
+          <button id="btn-refresh-lid-overview" class="btn-header" style="padding: 4px 10px; font-size: 0.75rem;">
+            Refresh Events
           </button>
         </div>
-      </div>
-    </section>
+        <table class="custom-table">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Trigger Type</th>
+              <th>Distance</th>
+              <th>State Transition</th>
+              <th>Actuator Response</th>
+            </tr>
+          </thead>
+          <tbody id="overview-lid-events-tbody">
+            <tr>
+              <td colspan="5" class="empty-state-notice">
+                No lid proximity events recorded yet. Connect sensor hardware to monitor proximity detections.
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+    </main>
 
-    <!-- Real Lid Activity Event History -->
-    <section class="data-card">
-      <div class="section-title" style="margin-bottom: 0;">
-        <span>Lid Activity Event History</span>
-        <button id="btn-refresh-lid" class="btn-header" style="padding: 4px 10px; font-size: 0.75rem;">
-          Refresh History
-        </button>
-      </div>
-      <table class="custom-table">
-        <thead>
-          <tr>
-            <th>Timestamp</th>
-            <th>Trigger Type</th>
-            <th>Distance</th>
-            <th>State Transition</th>
-            <th>Actuator Response</th>
-          </tr>
-        </thead>
-        <tbody id="lid-events-tbody">
-          <tr>
-            <td colspan="5" class="empty-state-notice">
-              No lid opening events recorded yet. Connect sensor hardware to monitor proximity detections.
-            </td>
-          </tr>
-        </tbody>
-      </table>
-    </section>
+    <!-- ===================================================================== -->
+    <!-- PAGE 2: TECHNICAL OPERATIONS VIEW (#view-operations)                 -->
+    <!-- ===================================================================== -->
+    <main id="view-operations" class="page-view" role="tabpanel" aria-labelledby="tab-operations" style="display: none;">
 
-    <!-- Historical Analytics Charts -->
-    <section>
-      <div class="section-title">
-        <span id="chart-section-title">Historical Sensor Analytics</span>
-        <span id="chart-section-subtitle" style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
-          Rendered from Actual Backend Records (Zero Fabricated Points)
-        </span>
-      </div>
-
-      <div class="charts-grid">
-        <!-- Weight History Chart -->
-        <article class="chart-card">
-          <h4 style="font-size: 0.9rem; font-weight: 700; color: var(--text-main);">Mass Measurement vs Time (Grams)</h4>
-          <div class="chart-canvas-wrap" id="chart-weight-wrap">
-            <span class="chart-empty-text">No historical weight records available</span>
-          </div>
-        </article>
-
-        <!-- Moisture History Chart -->
-        <article class="chart-card">
-          <h4 style="font-size: 0.9rem; font-weight: 700; color: var(--text-main);">Soil Moisture vs Time (%)</h4>
-          <div class="chart-canvas-wrap" id="chart-moisture-wrap">
-            <span class="chart-empty-text">No historical moisture records available</span>
-          </div>
-        </article>
-      </div>
-    </section>
-
-    <!-- System Diagnostics & Alerts -->
-    <section class="data-card">
-      <div class="section-title">
-        <span>Active System Alerts & Diagnostics</span>
-        <span class="card-pill ok" id="alerts-status-pill">NORMAL</span>
-      </div>
-      <div class="alerts-list" id="alerts-container">
-        <div class="alert-row info">
-          <span>ℹ</span>
-          <span>System running nominal. Awaiting live sensor packet ingestion.</span>
+      <!-- A. Device Management Panel -->
+      <section class="operations-panel">
+        <div class="section-title">
+          <span>Panel A: Microcontroller Management & Telemetry Packets</span>
+          <span class="section-subtitle">Real-Time Serial Protocol & Transport State</span>
         </div>
-      </div>
-    </section>
 
-    <!-- Interactive Serial Terminal & Commands -->
-    <section class="terminal-card">
-      <div class="terminal-header">
-        <span class="terminal-title">ARDUINO UNO SERIAL TELEMETRY STREAM & COMMANDS</span>
-        <div style="display: flex; gap: 8px;">
-          <button id="cmd-tare" class="btn-header" style="padding: 4px 8px; font-size: 0.72rem; background: #1e293b; color: #fff; border-color: #475569;">
-            Tare Scale ('t')
-          </button>
-          <button id="cmd-open" class="btn-header" style="padding: 4px 8px; font-size: 0.72rem; background: #1e293b; color: #fff; border-color: #475569;">
-            Force Lid Open ('o')
-          </button>
-          <button id="cmd-close" class="btn-header" style="padding: 4px 8px; font-size: 0.72rem; background: #1e293b; color: #fff; border-color: #475569;">
-            Force Lid Close ('x')
-          </button>
-          <button id="cmd-clear" class="btn-header" style="padding: 4px 8px; font-size: 0.72rem; background: #1e293b; color: #fff; border-color: #475569;">
-            Clear
-          </button>
+        <div class="operations-grid-2">
+          <!-- Arduino Uno Diagnostic Card -->
+          <article class="sensor-card op-card" id="op-card-uno">
+            <div class="card-header">
+              <div class="sensor-title-group">
+                <h3>Module A: Arduino Uno (Lid Actuator)</h3>
+                <span class="sensor-pin-label">Firmware v2.1.0-UNO • ATmega328P @ 16MHz (5V)</span>
+              </div>
+              <span class="card-pill uncalibrated" id="op-uno-pill">OFFLINE</span>
+            </div>
+            <div class="card-meta-list">
+              <div class="meta-row"><span class="meta-label">Device ID:</span><span class="meta-val" id="op-uno-dev">UNO-WS01</span></div>
+              <div class="meta-row"><span class="meta-label">Transport:</span><span class="meta-val">UART USB Serial @ 115200 baud</span></div>
+              <div class="meta-row"><span class="meta-label">Time Since Packet:</span><span class="meta-val" id="op-uno-elapsed">—</span></div>
+              <div class="meta-row"><span class="meta-label">Sequence & Uptime:</span><span class="meta-val" id="op-uno-seq-up">—</span></div>
+              <div class="meta-row"><span class="meta-label">Distance / Proximity:</span><span class="meta-val" id="op-uno-dist-prox">—</span></div>
+              <div class="meta-row"><span class="meta-label">Commanded Lid:</span><span class="meta-val" id="op-uno-lid-cmd">CLOSED (0°)</span></div>
+              <div class="meta-row"><span class="meta-label">Active Faults:</span><span class="meta-val" id="op-uno-faults">None</span></div>
+              <div class="meta-row"><span class="meta-label">Uno 16x2 LCD:</span><span class="meta-val" id="op-uno-lcd">I2C 0x27 • Priority Screen Active</span></div>
+            </div>
+            <div class="raw-packet-box">
+              <span class="raw-packet-title">Latest Raw Packet:</span>
+              <pre class="raw-packet-code" id="op-uno-raw-packet">Waiting for incoming packet...</pre>
+            </div>
+          </article>
+
+          <!-- ESP32 Diagnostic Card -->
+          <article class="sensor-card op-card" id="op-card-esp32">
+            <div class="card-header">
+              <div class="sensor-title-group">
+                <h3>Module B: ESP32 Multi-Sensor Hub</h3>
+                <span class="sensor-pin-label">Firmware v2.2.0-ESP32 • DevKit V1 (3.3V Logic)</span>
+              </div>
+              <span class="card-pill uncalibrated" id="op-esp-pill">OFFLINE</span>
+            </div>
+            <div class="card-meta-list">
+              <div class="meta-row"><span class="meta-label">Device ID:</span><span class="meta-val" id="op-esp-dev">ESP32-WS01</span></div>
+              <div class="meta-row"><span class="meta-label">Transport:</span><span class="meta-val">UART USB Serial / HTTP POST @ 8080</span></div>
+              <div class="meta-row"><span class="meta-label">Time Since Packet:</span><span class="meta-val" id="op-esp-elapsed">—</span></div>
+              <div class="meta-row"><span class="meta-label">Sequence & Uptime:</span><span class="meta-val" id="op-esp-seq-up">—</span></div>
+              <div class="meta-row"><span class="meta-label">Channels Health:</span><span class="meta-val" id="op-esp-chans-status">C1: — • C2: — • LC1: — • LC2: —</span></div>
+              <div class="meta-row"><span class="meta-label">NVS Calibration:</span><span class="meta-val" id="op-esp-calib-nvs">Preferences NVS Loaded</span></div>
+              <div class="meta-row"><span class="meta-label">Lid Sync State:</span><span class="meta-val" id="op-esp-lid-sync">CLOSED (Synchronized)</span></div>
+              <div class="meta-row"><span class="meta-label">ESP32 16x2 LCD:</span><span class="meta-val" id="op-esp-lcd">I2C 0x27 • 4-Page Rotation</span></div>
+            </div>
+            <div class="raw-packet-box">
+              <span class="raw-packet-title">Latest Raw Packet:</span>
+              <pre class="raw-packet-code" id="op-esp-raw-packet">Waiting for incoming packet...</pre>
+            </div>
+          </article>
         </div>
-      </div>
-      <div class="terminal-stream" id="terminal-stream">
-[SYSTEM] Intelligent Waste Segregation Analytics Dashboard initialized.
-[SYSTEM] Backend endpoint: http://localhost:8080/api/telemetry/latest
+      </section>
+
+      <!-- B. Four-Channel Sensor Diagnostics -->
+      <section class="operations-panel">
+        <div class="section-title">
+          <span>Panel B: Four Independent Physical Sensor Channels</span>
+          <span class="section-subtitle">Dedicated Analog Pins, HX711 Counters & Calibration Records</span>
+        </div>
+
+        <div class="sensor-grid">
+          <!-- Channel C1: Capacitive Moisture 1 -->
+          <article class="sensor-card" id="card-c1">
+            <div class="card-header">
+              <div class="sensor-title-group">
+                <h3>C1 — Capacitive Moisture</h3>
+                <span class="sensor-pin-label">ESP32 ADC1 Pin 34 • Compartment A (Bio)</span>
+              </div>
+              <span class="card-pill uncalibrated" id="c1-pill">UNCALIBRATED</span>
+            </div>
+            <div class="card-main-metric">
+              <div class="metric-number-group">
+                <span class="metric-value" id="c1-pct-val">—</span>
+                <span class="metric-unit">%</span>
+              </div>
+              <p class="metric-subtext" id="c1-desc">Raw 12-bit ADC voltage reading</p>
+            </div>
+            <div class="card-meta-list">
+              <div class="meta-row"><span class="meta-label">Raw 12-Bit ADC:</span><span class="meta-val" id="c1-raw-val">—</span></div>
+              <div class="meta-row"><span class="meta-label">ADC Range:</span><span class="meta-val">200 – 3950 ADC</span></div>
+              <div class="meta-row"><span class="meta-label">Dry Reference (0%):</span><span class="meta-val" id="c1-air-ref">3200 ADC</span></div>
+              <div class="meta-row"><span class="meta-label">Wet Reference (100%):</span><span class="meta-val" id="c1-water-ref">1400 ADC</span></div>
+              <div class="meta-row"><span class="meta-label">Channel Health:</span><span class="meta-val" id="c1-health-text">Offline</span></div>
+            </div>
+          </article>
+
+          <!-- Channel C2: Capacitive Moisture 2 -->
+          <article class="sensor-card" id="card-c2">
+            <div class="card-header">
+              <div class="sensor-title-group">
+                <h3>C2 — Capacitive Moisture</h3>
+                <span class="sensor-pin-label">ESP32 ADC1 Pin 35 • Compartment B (Non-Bio)</span>
+              </div>
+              <span class="card-pill uncalibrated" id="c2-pill">UNCALIBRATED</span>
+            </div>
+            <div class="card-main-metric">
+              <div class="metric-number-group">
+                <span class="metric-value" id="c2-pct-val">—</span>
+                <span class="metric-unit">%</span>
+              </div>
+              <p class="metric-subtext" id="c2-desc">Independent inorganic moisture channel</p>
+            </div>
+            <div class="card-meta-list">
+              <div class="meta-row"><span class="meta-label">Raw 12-Bit ADC:</span><span class="meta-val" id="c2-raw-val">—</span></div>
+              <div class="meta-row"><span class="meta-label">ADC Range:</span><span class="meta-val">200 – 3950 ADC</span></div>
+              <div class="meta-row"><span class="meta-label">Dry Reference (0%):</span><span class="meta-val" id="c2-air-ref">3200 ADC</span></div>
+              <div class="meta-row"><span class="meta-label">Wet Reference (100%):</span><span class="meta-val" id="c2-water-ref">1400 ADC</span></div>
+              <div class="meta-row"><span class="meta-label">Channel Health:</span><span class="meta-val" id="c2-health-text">Offline</span></div>
+            </div>
+          </article>
+
+          <!-- Channel LC1: Load Cell 1 -->
+          <article class="sensor-card" id="card-lc1">
+            <div class="card-header">
+              <div class="sensor-title-group">
+                <h3>Load Cell 1 (HX711)</h3>
+                <span class="sensor-pin-label">ESP32 GPIO 16 (DOUT), 4 (SCK) • Comp A</span>
+              </div>
+              <span class="card-pill uncalibrated" id="lc1-pill">UNCALIBRATED</span>
+            </div>
+            <div class="card-main-metric">
+              <div class="metric-number-group">
+                <span class="metric-value" id="lc1-g-val">—</span>
+                <span class="metric-unit">g</span>
+              </div>
+              <p class="metric-subtext" id="lc1-desc">Dedicated mass for Biodegradable bin</p>
+            </div>
+            <div class="card-meta-list">
+              <div class="meta-row"><span class="meta-label">Raw HX711 Counts:</span><span class="meta-val" id="lc1-raw-val">—</span></div>
+              <div class="meta-row"><span class="meta-label">Calibration Factor:</span><span class="meta-val" id="lc1-factor-val">420.0 counts/g</span></div>
+              <div class="meta-row"><span class="meta-label">Zero Tare Offset:</span><span class="meta-val" id="lc1-tare-val">—</span></div>
+              <div class="meta-row"><span class="meta-label">Max Capacity:</span><span class="meta-val">10,000 g (10 kg)</span></div>
+              <div class="meta-row"><span class="meta-label">Channel Health:</span><span class="meta-val" id="lc1-health-text">Offline</span></div>
+            </div>
+          </article>
+
+          <!-- Channel LC2: Load Cell 2 -->
+          <article class="sensor-card" id="card-lc2">
+            <div class="card-header">
+              <div class="sensor-title-group">
+                <h3>Load Cell 2 (HX711)</h3>
+                <span class="sensor-pin-label">ESP32 GPIO 17 (DOUT), 18 (SCK) • Comp B</span>
+              </div>
+              <span class="card-pill uncalibrated" id="lc2-pill">UNCALIBRATED</span>
+            </div>
+            <div class="card-main-metric">
+              <div class="metric-number-group">
+                <span class="metric-value" id="lc2-g-val">—</span>
+                <span class="metric-unit">g</span>
+              </div>
+              <p class="metric-subtext" id="lc2-desc">Dedicated mass for Non-Biodegradable bin</p>
+            </div>
+            <div class="card-meta-list">
+              <div class="meta-row"><span class="meta-label">Raw HX711 Counts:</span><span class="meta-val" id="lc2-raw-val">—</span></div>
+              <div class="meta-row"><span class="meta-label">Calibration Factor:</span><span class="meta-val" id="lc2-factor-val">420.0 counts/g</span></div>
+              <div class="meta-row"><span class="meta-label">Zero Tare Offset:</span><span class="meta-val" id="lc2-tare-val">—</span></div>
+              <div class="meta-row"><span class="meta-label">Max Capacity:</span><span class="meta-val">10,000 g (10 kg)</span></div>
+              <div class="meta-row"><span class="meta-label">Channel Health:</span><span class="meta-val" id="lc2-health-text">Offline</span></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- C. Autonomous Lid Diagnostics & State Machine -->
+      <section class="operations-panel">
+        <div class="section-title">
+          <span>Panel C: Autonomous Lid Actuation & State Machine (Uno)</span>
+          <span class="section-subtitle">HC-SR04 Proximity Loop • Independent Hardware Control</span>
+        </div>
+
+        <div class="operations-grid-2">
+          <article class="sensor-card op-card">
+            <div class="card-header">
+              <div class="sensor-title-group">
+                <h3>Lid State Machine Engine</h3>
+                <span class="sensor-pin-label">Arduino Uno Loop • Non-Blocking Servo PWM D6</span>
+              </div>
+              <span class="card-pill ok" id="op-lid-state-pill">CLOSED</span>
+            </div>
+            <div class="card-meta-list">
+              <div class="meta-row"><span class="meta-label">Commanded Angle:</span><span class="meta-val" id="op-lid-angle">0° (CLOSED)</span></div>
+              <div class="meta-row"><span class="meta-label">Physical Feedback:</span><span class="meta-val" style="color: var(--text-dim);">Commanded State (No limit switch installed)</span></div>
+              <div class="meta-row"><span class="meta-label">Trigger Threshold:</span><span class="meta-val">≤ 20.0 cm</span></div>
+              <div class="meta-row"><span class="meta-label">Debounce Setting:</span><span class="meta-val">2 consecutive cycles</span></div>
+              <div class="meta-row"><span class="meta-label">Hold Open Duration:</span><span class="meta-val">4000 ms</span></div>
+              <div class="meta-row"><span class="meta-label">Cooldown Delay:</span><span class="meta-val">1500 ms</span></div>
+            </div>
+          </article>
+
+          <article class="sensor-card op-card">
+            <div class="card-header">
+              <div class="sensor-title-group">
+                <h3>Cross-Device Lid Synchronization</h3>
+                <span class="sensor-pin-label">Relayed to ESP32 LCD via Gateway</span>
+              </div>
+              <span class="card-pill ok" id="op-sync-status-pill">COORDINATED</span>
+            </div>
+            <div class="card-meta-list">
+              <div class="meta-row"><span class="meta-label">Uno Lid State:</span><span class="meta-val" id="op-sync-uno-state">CLOSED</span></div>
+              <div class="meta-row"><span class="meta-label">ESP32 Synced State:</span><span class="meta-val" id="op-sync-esp-state">CLOSED</span></div>
+              <div class="meta-row"><span class="meta-label">Sync Protocol:</span><span class="meta-val">Structured JSON Command {"cmd":"sync_lid"}</span></div>
+              <div class="meta-row"><span class="meta-label">Staleness Timeout:</span><span class="meta-val">5000 ms (Marks STALE if link severed)</span></div>
+              <div class="meta-row"><span class="meta-label">Simulation Safety:</span><span class="meta-val">Hardware isolated during simulation</span></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- D. Command Console & Multi-Device Controls -->
+      <section class="operations-panel">
+        <div class="section-title">
+          <span>Panel D: Targeted Device Command Console & Calibration Workflows</span>
+          <span class="section-subtitle">Independent Calibration for C1, C2, LC1, and LC2</span>
+        </div>
+
+        <div class="commands-control-grid">
+          <!-- Uno Hardware Controls Card -->
+          <article class="data-card cmd-box">
+            <h4 class="cmd-box-title">Module A: Arduino Uno Actuator Commands</h4>
+            <p class="cmd-box-sub">Send physical commands strictly to Arduino Uno over Serial. Disabled in Simulation Mode.</p>
+            <div class="cmd-actions-row">
+              <button id="btn-cmd-open" class="btn-action primary">Force Lid Open ('o')</button>
+              <button id="btn-cmd-close" class="btn-action secondary">Force Lid Close ('x')</button>
+              <button id="btn-cmd-uno-status" class="btn-action">Request Status ('h')</button>
+            </div>
+            <div class="cmd-status-line" id="uno-cmd-status">Status: Ready</div>
+          </article>
+
+          <!-- ESP32 Calibration Workflows Card -->
+          <article class="data-card cmd-box">
+            <h4 class="cmd-box-title">Module B: ESP32 Calibration Workflows</h4>
+            <p class="cmd-box-sub">Calibrate individual channels. Values persist into ESP32 Preferences (NVS).</p>
+            
+            <div class="calib-controls-grid">
+              <!-- Load Cell 1 Controls -->
+              <div class="calib-group">
+                <span class="calib-group-title">Load Cell 1 (Compartment A Mass)</span>
+                <div class="calib-input-row">
+                  <button id="btn-tare-lc1" class="btn-action">Tare LC1</button>
+                  <input type="number" id="input-ref-lc1" class="form-input cal-input" placeholder="Ref g (500)" value="500">
+                  <button id="btn-cal-lc1" class="btn-action primary">Calibrate LC1</button>
+                </div>
+              </div>
+
+              <!-- Load Cell 2 Controls -->
+              <div class="calib-group">
+                <span class="calib-group-title">Load Cell 2 (Compartment B Mass)</span>
+                <div class="calib-input-row">
+                  <button id="btn-tare-lc2" class="btn-action">Tare LC2</button>
+                  <input type="number" id="input-ref-lc2" class="form-input cal-input" placeholder="Ref g (500)" value="500">
+                  <button id="btn-cal-lc2" class="btn-action primary">Calibrate LC2</button>
+                </div>
+              </div>
+
+              <!-- Moisture C1 Controls -->
+              <div class="calib-group">
+                <span class="calib-group-title">Capacitive Moisture C1 (Biodegradable)</span>
+                <div class="calib-input-row">
+                  <button id="btn-cal-c1-dry" class="btn-action">Set Dry Air Ref (0%)</button>
+                  <button id="btn-cal-c1-wet" class="btn-action">Set Wet Water Ref (100%)</button>
+                </div>
+              </div>
+
+              <!-- Moisture C2 Controls -->
+              <div class="calib-group">
+                <span class="calib-group-title">Capacitive Moisture C2 (Non-Biodegradable)</span>
+                <div class="calib-input-row">
+                  <button id="btn-cal-c2-dry" class="btn-action">Set Dry Air Ref (0%)</button>
+                  <button id="btn-cal-c2-wet" class="btn-action">Set Wet Water Ref (100%)</button>
+                </div>
+              </div>
+            </div>
+            <div class="cmd-status-line" id="esp32-cmd-status">Status: Ready</div>
+          </article>
+        </div>
+
+        <!-- Terminal Output Stream -->
+        <div class="terminal-card" style="margin-top: 16px;">
+          <div class="terminal-header">
+            <span class="terminal-title">BIDIRECTIONAL SERIAL TELEMETRY STREAM & AUDIT LOG</span>
+            <button id="cmd-clear-term" class="btn-header" style="padding: 2px 8px; font-size: 0.7rem;">Clear Log</button>
+          </div>
+          <div class="terminal-stream" id="terminal-stream">
+[SYSTEM] Intelligent Waste Segregation Analytics — Technical Operations Dashboard initialized.
+[SYSTEM] Host Endpoints: /api/telemetry/combined | /api/devices/status | /api/ml/*
 [SYSTEM] Ready for live telemetry streaming.
-      </div>
-    </section>
+          </div>
+        </div>
+      </section>
+
+      <!-- E. Modular LCD Displays Diagnostics -->
+      <section class="operations-panel">
+        <div class="section-title">
+          <span>Panel E: Physical LCD Displays Status</span>
+          <span class="section-subtitle">Modular Display Layer for Arduino Uno & ESP32</span>
+        </div>
+
+        <div class="operations-grid-2">
+          <article class="sensor-card op-card">
+            <div class="card-header">
+              <div class="sensor-title-group">
+                <h3>Module A: Arduino Uno 16x2 LCD</h3>
+                <span class="sensor-pin-label">I2C Standard: SDA A4, SCL A5 • Address 0x27</span>
+              </div>
+              <span class="card-pill ok" id="op-lcd-uno-pill">CONFIGURED</span>
+            </div>
+            <div class="card-meta-list">
+              <div class="meta-row"><span class="meta-label">Display Priority:</span><span class="meta-val">Line 1: LID: OPEN/CLOSED • Line 2: Distance & Prox</span></div>
+              <div class="meta-row"><span class="meta-label">Refresh Timing:</span><span class="meta-val">500ms Non-Blocking Loop</span></div>
+              <div class="meta-row"><span class="meta-label">Bus Presence Check:</span><span class="meta-val">Safe I2C ping on boot (Never locks servo loop)</span></div>
+              <div class="meta-row"><span class="meta-label">Display Mode:</span><span class="meta-val">Priority Screen (Rotates to warning if fault occurs)</span></div>
+            </div>
+          </article>
+
+          <article class="sensor-card op-card">
+            <div class="card-header">
+              <div class="sensor-title-group">
+                <h3>Module B: ESP32 16x2 LCD</h3>
+                <span class="sensor-pin-label">I2C Standard: SDA GPIO 21, SCL GPIO 22 • Address 0x27</span>
+              </div>
+              <span class="card-pill ok" id="op-lcd-esp-pill">CONFIGURED</span>
+            </div>
+            <div class="card-meta-list">
+              <div class="meta-row"><span class="meta-label">Paging Configuration:</span><span class="meta-val">4 Rotating Pages (3500ms interval)</span></div>
+              <div class="meta-row"><span class="meta-label">Page 0 (Comp A):</span><span class="meta-val">BIN A: C1 Moist % & LC1 Weight g</span></div>
+              <div class="meta-row"><span class="meta-label">Page 1 (Comp B):</span><span class="meta-val">BIN B: C2 Moist % & LC2 Weight g</span></div>
+              <div class="meta-row"><span class="meta-label">Page 2 (Uno Sync):</span><span class="meta-val">LID SYNC: OPEN/CLOSED [OK]</span></div>
+              <div class="meta-row"><span class="meta-label">Page 3 (Diagnostics):</span><span class="meta-val">Sensor Calibration & Hardware Status Summary</span></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <!-- F. Machine Learning & Predictive Analytics Diagnostics -->
+      <section class="operations-panel">
+        <div class="section-title">
+          <span>Panel F: Machine Learning Diagnostics & Model Registry</span>
+          <span class="section-subtitle">Isolation Forest, Multi-Horizon Random Forest & Category Classifier</span>
+        </div>
+
+        <div class="sensor-grid ml-cards-grid">
+          <!-- Model A: Sensor Anomaly Detector -->
+          <article class="sensor-card ml-card">
+            <div class="card-header">
+              <div class="sensor-title-group">
+                <h3>Sensor Anomaly Detector</h3>
+                <span class="sensor-pin-label">Model A: Isolation Forest (31 Engineered Features)</span>
+              </div>
+              <span class="card-pill ok" id="op-ml-anom-pill">NORMAL</span>
+            </div>
+            <div class="card-main-metric">
+              <div class="metric-number-group">
+                <span class="metric-value" id="op-ml-anom-score">—</span>
+                <span class="metric-unit">/ 1.0</span>
+              </div>
+              <p class="metric-subtext" id="op-ml-anom-thresh">Decision Boundary: 0.5000</p>
+            </div>
+            <div class="card-meta-list">
+              <div class="meta-row"><span class="meta-label">Diagnostic Status:</span><span class="meta-val" id="op-ml-anom-status">Nominal multivariate telemetry</span></div>
+              <div class="meta-row"><span class="meta-label">Attributed Channel:</span><span class="meta-val" id="op-ml-anom-chan">None</span></div>
+              <div class="meta-row"><span class="meta-label">Artifact:</span><span class="meta-val">models/anomaly_detector.joblib</span></div>
+            </div>
+          </article>
+
+          <!-- Model B: Waste Mass Forecaster -->
+          <article class="sensor-card ml-card">
+            <div class="card-header">
+              <div class="sensor-title-group">
+                <h3>Waste Mass Forecaster</h3>
+                <span class="sensor-pin-label">Model B: Multi-Horizon Random Forest (LC1 & LC2)</span>
+              </div>
+              <div class="ml-horizon-selector" role="group" aria-label="Forecast horizon selection">
+                <button class="btn-horizon active" id="btn-op-horizon-5m" data-horizon="5m">+5m</button>
+                <button class="btn-horizon" id="btn-op-horizon-15m" data-horizon="15m">+15m</button>
+                <button class="btn-horizon" id="btn-op-horizon-30m" data-horizon="30m">+30m</button>
+              </div>
+            </div>
+            <div class="card-main-metric">
+              <div class="metric-number-group">
+                <span class="metric-value" id="op-ml-fc-val">—</span>
+                <span class="metric-unit">g</span>
+              </div>
+              <p class="metric-subtext" id="op-ml-fc-subtext">LC1: — g • LC2: — g</p>
+            </div>
+            <div class="card-meta-list">
+              <div class="meta-row"><span class="meta-label">LC1 Benchmark (+5m):</span><span class="meta-val">MAE: 306.8g (vs Baseline 513.5g | Beats Baseline)</span></div>
+              <div class="meta-row"><span class="meta-label">LC2 Benchmark (+5m):</span><span class="meta-val">MAE: 303.8g (vs Baseline 732.9g | Beats Baseline)</span></div>
+              <div class="meta-row"><span class="meta-label">+30m Notice:</span><span class="meta-val" style="color: var(--accent-amber);">Degrades vs Persistence (Transparent Benchmark)</span></div>
+            </div>
+          </article>
+
+          <!-- Model C: Experimental Category Classifier -->
+          <article class="sensor-card ml-card">
+            <div class="card-header">
+              <div class="sensor-title-group">
+                <h3>Category Classifier (Prototype)</h3>
+                <span class="sensor-pin-label">Model C: Strict 2-Class Random Forest</span>
+              </div>
+              <span class="card-pill ok" id="op-ml-cat-pill">PROTOTYPE</span>
+            </div>
+            <div class="card-main-metric">
+              <div class="metric-number-group">
+                <span class="metric-value" id="op-ml-cat-val">UNCLASSIFIED</span>
+              </div>
+              <p class="metric-subtext" id="op-ml-cat-conf">Confidence: —%</p>
+            </div>
+            <div class="card-meta-list">
+              <div class="meta-row"><span class="meta-label">Supported Classes:</span><span class="meta-val">BIODEGRADABLE vs NON_BIODEGRADABLE</span></div>
+              <div class="meta-row"><span class="meta-label">Compartment C:</span><span class="meta-val">Reserved Future Use (Excluded from classifier)</span></div>
+              <div class="meta-row"><span class="meta-label">Disclaimer:</span><span class="meta-val" style="color: var(--accent-amber);">Synthetic profiles only — Not chemical validation</span></div>
+            </div>
+          </article>
+        </div>
+      </section>
+
+    </main>
   </div>
 
   <script src="app.js"></script>

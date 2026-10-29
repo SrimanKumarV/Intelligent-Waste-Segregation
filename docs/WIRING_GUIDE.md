@@ -1,101 +1,136 @@
-# Wiring Guide — Intelligent Waste Segregation Analytics (Arduino Uno)
+# Complete Wiring Guide — Multi-Microcontroller Hardware Setup
 
-This guide provides step-by-step assembly instructions for connecting the active physical prototype sensors and actuators to an Arduino Uno.
-
----
-
-## 1. Required Components
-
-| Item | Component | Specification | Quantity |
-| :--- | :--- | :--- | :--- |
-| 1 | Microcontroller | Arduino Uno R3 (ATmega328P) with USB-B cable | 1 |
-| 2 | Moisture Sensor | Capacitive Soil Moisture Sensor v1.2 | 1 |
-| 3 | Load Cell & Amp | Straight bar load cell (5kg–10kg) + HX711 module | 1 |
-| 4 | Proximity Sensor | HC-SR04 Ultrasonic Sensor | 1 |
-| 5 | Lid Actuator | Servo Motor (SG90 / MG90S 180° rotation) | 1 |
-| 6 | Visual LEDs | 1× Amber/Yellow LED, 1× Red LED | 2 |
-| 7 | Resistors | 220Ω, 0.25W (current limiting for LEDs) | 2 |
-| 8 | Prototyping | Half-size solderless breadboard + Dupont jumper wires | 1 set |
-| 9 | Power Supply | 5V USB connection to PC or external 5V 1A DC adapter | 1 |
+This document provides step-by-step physical assembly and electrical interfacing instructions for the **Intelligent Solid Waste Segregation System** using dual microcontrollers: **Module A (Arduino Uno)** and **Module B (ESP32 DevKit V1)**.
 
 ---
 
-## 2. Step-by-Step Wiring Sequence
+## 1. Bill of Materials (BOM)
 
-### Step 1: Power & Common Ground Distribution
-1. Connect the **5V** pin on the Arduino Uno to the **Red (+) power rail** on the breadboard.
-2. Connect the **GND** pin on the Arduino Uno to the **Blue/Black (-) ground rail** on the breadboard.
-3. *Note:* If using an external 5V power supply for the servo, ensure the external power supply GND is connected directly to the Arduino Uno GND rail (Common Ground).
+| Item | Component | Specification | Quantity | Connected Module |
+| :--- | :--- | :--- | :--- | :--- |
+| 1 | **Module A Microcontroller** | Arduino Uno R3 (ATmega328P, 5.0V TTL) | 1 | Host USB Port 1 |
+| 2 | **Module B Microcontroller** | ESP32 DevKit V1 (30-pin or 38-pin, 3.3V Logic) | 1 | Host USB Port 2 |
+| 3 | **Proximity Sensor** | HC-SR04 Ultrasonic Rangefinder | 1 | Module A (Uno) |
+| 4 | **Lid Actuator** | SG90 / MG90S 180° Micro Servo Motor | 1 | Module A (Uno) |
+| 5 | **Module A Display** | 16x2 Character LCD with PCF8574 I2C Backpack | 1 | Module A (Uno) |
+| 6 | **Moisture Sensor C1** | Capacitive Soil Moisture Sensor v1.2 (Compartment A) | 1 | Module B (ESP32) |
+| 7 | **Moisture Sensor C2** | Capacitive Soil Moisture Sensor v1.2 (Compartment B) | 1 | Module B (ESP32) |
+| 8 | **Load Cell 1 + Amp** | 5kg–10kg Strain Gauge + HX711 Amplifier (Comp A) | 1 | Module B (ESP32) |
+| 9 | **Load Cell 2 + Amp** | 5kg–10kg Strain Gauge + HX711 Amplifier (Comp B) | 1 | Module B (ESP32) |
+| 10 | **Module B Display** | 16x2 Character LCD with PCF8574 I2C Backpack | 1 | Module B (ESP32) |
+| 11 | **Diagnostic LEDs** | 1× Amber (Proximity), 1× Red (Fault) | 2 | Module A (Uno) |
+| 12 | **Current Resistors** | 220Ω 0.25W (for LEDs) | 2 | Module A (Uno) |
+| 13 | **Prototyping & Power** | Solderless breadboards, Dupont jumpers, USB-B & Micro-USB cables | 1 set | Power & Bus |
 
 ---
 
-### Step 2: Capacitive Soil Moisture Sensor
-The capacitive moisture sensor uses three pins:
+## 2. Wiring Module A — Arduino Uno (Lid Actuation & Proximity)
+
 ```
-Moisture Sensor VCC   ────> Breadboard 5V Rail
-Moisture Sensor GND   ────> Breadboard GND Rail
-Moisture Sensor AOUT  ────> Arduino Uno Pin A0
+                       +-----------------------+
+                       |    Arduino Uno R3     |
+                       |                       |
+[HC-SR04 TRIG] ------->| D4                    |
+[HC-SR04 ECHO] ------->| D5                    |
+[Servo PWM Orange] --->| D6 (PWM)              |
+[Amber LED + 220R] --->| D7                    |
+[Red Fault + 220R] --->| D8                    |
+[Uno LCD SDA] -------->| A4 (SDA)              |
+[Uno LCD SCL] -------->| A5 (SCL)              |
+[USB Serial] --------->| USB-B to Host Gateway |
+                       +-----------------------+
 ```
-*Installation Note:* Keep the onboard circuitry and header pins dry. Only the lower white capacitive trace blade should be inserted into the waste bin.
+
+### Detailed Wiring Steps for Module A:
+1. **Power Rails:** Connect Uno 5V to the breadboard Red rail and Uno GND to the breadboard Black rail.
+2. **HC-SR04 Ultrasonic Sensor:**
+   - VCC ────> 5V Rail
+   - GND ────> GND Rail
+   - TRIG ───> Uno Pin **D4**
+   - ECHO ───> Uno Pin **D5** (Direct connection; 5V native)
+3. **Automatic Lid Servo:**
+   - Power (Red) ──────> 5V Rail (or dedicated external 5V 1A DC supply with shared GND)
+   - Ground (Brown) ───> GND Rail
+   - PWM Signal (Orange/Yellow) ───> Uno Pin **D6**
+4. **Diagnostic Status LEDs:**
+   - Proximity Amber LED Anode (+) ──> 220Ω resistor ──> Uno Pin **D7**; Cathode (-) ──> GND Rail
+   - Fault Red LED Anode (+) ───────> 220Ω resistor ──> Uno Pin **D8**; Cathode (-) ──> GND Rail
+5. **Uno I2C 16x2 LCD:**
+   - VCC ────> 5V Rail
+   - GND ────> GND Rail
+   - SDA ────> Uno Pin **A4**
+   - SCL ────> Uno Pin **A5**
 
 ---
 
-### Step 3: Load Cell and HX711 Module
-1. **Connect Load Cell to HX711 Module (Wheatstone Bridge):**
-   - **Red Wire** ────> `E+` (Excitation positive)
-   - **Black Wire** ──> `E-` (Excitation negative / GND)
-   - **White Wire** ──> `A-` (Signal negative)
-   - **Green Wire** ──> `A+` (Signal positive)
-   *(If your load cell has a yellow shield wire, connect it to GND or leave unstripped).*
+## 3. Wiring Module B — ESP32 Sensor Hub (4 Channels & Display)
 
-2. **Connect HX711 Module to Arduino Uno:**
-   ```
-   HX711 VCC   ────> Breadboard 5V Rail
-   HX711 GND   ────> Breadboard GND Rail
-   HX711 DOUT  ────> Arduino Uno Pin D2
-   HX711 SCK   ────> Arduino Uno Pin D3
-   ```
-*Mechanical Note:* Ensure the load cell is mounted with spacer blocks so the center beam can deflect freely under weight without binding against the base plate.
+```
+                       +-------------------------+
+                       |     ESP32 DevKit V1     |
+                       |                         |
+[C1 Moisture AOUT] --->| GPIO 34 (ADC1_CH6)      | (Compartment A)
+[C2 Moisture AOUT] --->| GPIO 35 (ADC1_CH7)      | (Compartment B)
+[HX711 LC1 DOUT] ----->| GPIO 16                 | (Compartment A)
+[HX711 LC1 SCK] ------>| GPIO 4                  | (Compartment A)
+[HX711 LC2 DOUT] ----->| GPIO 17                 | (Compartment B)
+[HX711 LC2 SCK] ------>| GPIO 18                 | (Compartment B)
+[ESP32 LCD SDA] ------>| GPIO 21 (I2C SDA)       |
+[ESP32 LCD SCL] ------>| GPIO 22 (I2C SCL)       |
+[Micro-USB UART] ----->| USB to Host Gateway     |
+                       +-------------------------+
+```
+
+### Detailed Wiring Steps for Module B:
+1. **Power & Voltage Safety:**
+   - Connect ESP32 **3V3** to the 3.3V breadboard rail. Connect ESP32 **GND** to the ground rail.
+   - **CRITICAL:** Do NOT expose ESP32 GPIOs to 5.0V signals. Power the capacitive moisture sensors and HX711 breakout boards from the 3.3V rail.
+2. **Capacitive Moisture Sensor C1 (Biodegradable — Compartment A):**
+   - VCC ────> 3.3V Rail
+   - GND ────> GND Rail
+   - AOUT ───> ESP32 Pin **GPIO 34** (ADC1 Channel 6)
+3. **Capacitive Moisture Sensor C2 (Non-Biodegradable — Compartment B):**
+   - VCC ────> 3.3V Rail
+   - GND ────> GND Rail
+   - AOUT ───> ESP32 Pin **GPIO 35** (ADC1 Channel 7)
+4. **Load Cell 1 + HX711 Amplifier (Compartment A Mass):**
+   - Load cell 4-wire Wheatstone bridge: Red to E+, Black to E-, White to A-, Green to A+
+   - HX711 VCC ───> 3.3V Rail
+   - HX711 GND ───> GND Rail
+   - HX711 DOUT ──> ESP32 Pin **GPIO 16**
+   - HX711 SCK ───> ESP32 Pin **GPIO 4**
+5. **Load Cell 2 + HX711 Amplifier (Compartment B Mass):**
+   - Second load cell 4-wire Wheatstone bridge: Red to E+, Black to E-, White to A-, Green to A+
+   - Second HX711 VCC ───> 3.3V Rail
+   - Second HX711 GND ───> GND Rail
+   - Second HX711 DOUT ──> ESP32 Pin **GPIO 17**
+   - Second HX711 SCK ───> ESP32 Pin **GPIO 18**
+6. **ESP32 I2C 16x2 LCD:**
+   - VCC ────> 3.3V Rail (or 5V if LCD backpack has built-in level clamps)
+   - GND ────> GND Rail
+   - SDA ────> ESP32 Pin **GPIO 21**
+   - SCL ────> ESP32 Pin **GPIO 22**
 
 ---
 
-### Step 4: HC-SR04 Ultrasonic Proximity Sensor
-```
-HC-SR04 VCC   ────> Breadboard 5V Rail
-HC-SR04 GND   ────> Breadboard GND Rail
-HC-SR04 TRIG  ────> Arduino Uno Pin D4
-HC-SR04 ECHO  ────> Arduino Uno Pin D5
-```
-*Note:* Since the Arduino Uno operates at 5.0V TTL logic, the ECHO output can be wired directly to Pin D5 without requiring a voltage divider. Mount the sensor facing outward at the waste deposit opening.
+## 4. Physical Bin Compartment Installation
+
+1. **Compartment A (Biodegradable):**
+   - Mount Load Cell 1 under the base plate of Compartment A using M4 mounting bolts and rigid spacers so the center beam flexes freely.
+   - Mount Capacitive Probe C1 vertically inside Compartment A so that organic waste deposits contact the active capacitive zone. Keep the top header dry.
+2. **Compartment B (Non-Biodegradable):**
+   - Mount Load Cell 2 independently under the base plate of Compartment B.
+   - Mount Capacitive Probe C2 vertically inside Compartment B.
+3. **Compartment C (Reserved / Future Use):**
+   - Kept clean and unconfigured. No strain gauge or moisture probe installed. Excluded from active totals.
 
 ---
 
-### Step 5: Lid Actuator (Servo Motor)
-```
-Servo Power (Red)    ────> Breadboard 5V Rail (or External 5V Power Supply)
-Servo Ground (Brown/Black) ─> Breadboard GND Rail (Shared Common Ground)
-Servo PWM (Orange/Yellow) ──> Arduino Uno Pin D6
-```
-*Mechanical Alignment:* Before attaching the servo horn/arm to the bin lid linkage, power the Uno so the servo defaults to 0° (Closed position). Then fasten the mechanical arm.
+## 5. Cross-Device Lid Synchronization
 
----
-
-### Step 6: Status & Fault Indicator LEDs
-1. **Proximity / Lid Open LED (Amber/Yellow):**
-   - Arduino Uno **Pin D7** ──> 220Ω Resistor ──> Anode (long leg) of Amber LED
-   - Cathode (short leg / flat edge) ──> Breadboard GND Rail
-2. **Sensor Fault LED (Red):**
-   - Arduino Uno **Pin D8** ──> 220Ω Resistor ──> Anode (long leg) of Red LED
-   - Cathode (short leg / flat edge) ──> Breadboard GND Rail
-3. **Heartbeat LED:** Uses the Arduino Uno onboard LED on **Pin D13**.
-
----
-
-## 3. Pre-Power Safety Checklist
-
-Before plugging in the USB cable:
-- [ ] Verify that no breadboard jumpers bridge between 5V and GND (check resistance with multimeter).
-- [ ] Verify that the HX711 DOUT and SCK wires are firmly seated in Pins D2 and D3.
-- [ ] Confirm servo polarity: Red to 5V, Brown/Black to GND. Reversing servo power will destroy the servo board.
-- [ ] Verify that 220Ω resistors are in series with each LED.
-- [ ] Ensure the load cell beam has mechanical clearance to flex under applied mass.
+Because Module A (Uno) commands lid motion while Module B (ESP32) displays comprehensive system state on its LCD, the lid state is relayed between devices:
+- **Host Serial Gateway Relay (Verified Implementation):**
+  - Both boards connect via independent USB COM ports to the laptop.
+  - `gateway/serial_gateway.ps1` receives Uno telemetry. When a `lid_cmd` transition occurs (`CLOSED` ↔ `OPEN`), the gateway automatically sends `{"cmd":"sync_lid","state":"OPEN"}` into the ESP32 serial interface.
+  - The ESP32 parses this frame without blocking and updates its LCD Page 4 display.
+  - If updates stop for >5000ms, the ESP32 automatically flags the sync state as `STALE`.
