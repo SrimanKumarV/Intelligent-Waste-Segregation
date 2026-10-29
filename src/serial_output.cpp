@@ -34,6 +34,7 @@ void serial_printBanner() {
 
 void serial_printTelemetryJSON(const SystemTelemetry& telem) {
     // Zero-allocation JSON Lines emitter designed for ATmega328P 2KB SRAM
+    // Module A: Emits ultrasonic distance, proximity flag, and commanded lid state
     Serial.print(F("{\"v\":"));
     Serial.print(TELEMETRY_PROTOCOL_VER);
 
@@ -45,40 +46,6 @@ void serial_printTelemetryJSON(const SystemTelemetry& telem) {
 
     Serial.print(F(",\"up\":"));
     Serial.print(telem.uptimeSeconds);
-
-    // Moisture fields
-    Serial.print(F(",\"moist_raw\":"));
-    Serial.print(telem.moisture.rawValue);
-
-    Serial.print(F(",\"moist_pct\":"));
-    if (telem.moisture.isCalibrated && telem.moisture.status == SENSOR_OK) {
-        Serial.print(telem.moisture.calibratedPct, 1);
-    } else {
-        Serial.print(F("null"));
-    }
-
-    Serial.print(F(",\"moist_ok\":"));
-    Serial.print(telem.moisture.status == SENSOR_OK ? F("true") : F("false"));
-
-    Serial.print(F(",\"moist_cal\":"));
-    Serial.print(telem.moisture.isCalibrated ? F("true") : F("false"));
-
-    // Weight fields
-    Serial.print(F(",\"weight_g\":"));
-    if (telem.weight.isCalibrated && telem.weight.status == SENSOR_OK) {
-        Serial.print(telem.weight.weightGrams, 1);
-    } else {
-        Serial.print(F("null"));
-    }
-
-    Serial.print(F(",\"weight_raw\":"));
-    Serial.print(telem.weight.rawValue);
-
-    Serial.print(F(",\"weight_ok\":"));
-    Serial.print(telem.weight.status == SENSOR_OK ? F("true") : F("false"));
-
-    Serial.print(F(",\"weight_cal\":"));
-    Serial.print(telem.weight.isCalibrated ? F("true") : F("false"));
 
     // Ultrasonic proximity fields
     Serial.print(F(",\"dist_cm\":"));
@@ -104,23 +71,9 @@ void serial_printTelemetryJSON(const SystemTelemetry& telem) {
     // Fault array
     Serial.print(F(",\"faults\":["));
     bool firstFault = true;
-    if (telem.faultBitmask & FAULT_MOISTURE_OFFLINE) {
-        Serial.print(F("\"MOISTURE_OFFLINE\""));
-        firstFault = false;
-    }
-    if (telem.faultBitmask & FAULT_HX711_TIMEOUT) {
-        if (!firstFault) Serial.print(F(","));
-        Serial.print(F("\"HX711_TIMEOUT\""));
-        firstFault = false;
-    }
     if (telem.faultBitmask & FAULT_ULTRASONIC_TIMEOUT) {
-        if (!firstFault) Serial.print(F(","));
         Serial.print(F("\"ULTRASONIC_TIMEOUT\""));
         firstFault = false;
-    }
-    if (telem.faultBitmask & FAULT_CALIBRATION_REQUIRED) {
-        if (!firstFault) Serial.print(F(","));
-        Serial.print(F("\"CALIBRATION_REQUIRED\""));
     }
     Serial.print(F("]}"));
     Serial.println(); // Trailing newline completes JSON Lines record

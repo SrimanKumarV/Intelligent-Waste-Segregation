@@ -18,9 +18,18 @@ const state = {
   mode: 'hardware',
   debounceTimer: null,
 
-  // Hardware telemetry tracking
-  latestTelemetry: null,
+  // Multi-Device Hardware Telemetry Tracking
+  unoTelemetry: null,
+  lastUnoTimestamp: 0,
+  esp32Telemetry: null,
+  lastEsp32Timestamp: 0,
+  latestTelemetry: null, // Composite
   lastTelemetryTimestamp: 0,
+  deviceHealth: {
+    overall_status: 'ALL_OFFLINE',
+    uno: { status: 'DISCONNECTED', connected: false },
+    esp32: { status: 'DISCONNECTED', connected: false }
+  },
   historyData: [],
   lidEvents: [],
   categoryStats: null,
@@ -70,15 +79,19 @@ const dom = {
   simFaultIcon: document.getElementById('sim-fault-icon'),
   simFaultText: document.getElementById('sim-fault-text'),
 
-  // Header Status & Hardware
-  connBadge: document.getElementById('conn-badge'),
-  connText: document.getElementById('conn-text'),
+  // Dual Device Status Badges
+  unoConnBadge: document.getElementById('uno-conn-badge'),
+  unoConnText: document.getElementById('uno-conn-text'),
+  espConnBadge: document.getElementById('esp-conn-badge'),
+  espConnText: document.getElementById('esp-conn-text'),
   btnWebSerial: document.getElementById('btn-webserial'),
   btnWebSerialText: document.getElementById('btn-webserial-text'),
 
-  valDeviceId: document.getElementById('val-device-id'),
-  valLastReceived: document.getElementById('val-last-received'),
-  valUptime: document.getElementById('val-uptime'),
+  // Health Metrics Strip
+  valUnoStatus: document.getElementById('val-uno-status'),
+  valEspStatus: document.getElementById('val-esp-status'),
+  valUnoLast: document.getElementById('val-uno-last'),
+  valEspLast: document.getElementById('val-esp-last'),
   valFaultCount: document.getElementById('val-fault-count'),
 
   // Section titles
@@ -196,179 +209,300 @@ function logTerminal(message, type = 'dim') {
 function processTelemetryPacket(packet, sourceName = 'Backend') {
   if (!packet || typeof packet !== 'object') return;
 
+  const now = Date.now();
+  state.lastTelemetryTimestamp = now;
+
+  // Ingest into dedicated device states
+  if (packet.raw_uno || packet.uno) {
+    state.unoTelemetry = packet.raw_uno || packet.uno;
+    state.lastUnoTimestamp = now;
+  } else if (packet.dev && String(packet.dev).toUpperCase().includes('UNO')) {
+    state.unoTelemetry = packet;
+    state.lastUnoTimestamp = now;
+  } else if (packet.dist_cm !== undefined && packet.moist_raw === undefined && packet.weight_raw === undefined) {
+    state.unoTelemetry = packet;
+    state.lastUnoTimestamp = now;
+  }
+
+  if (packet.raw_esp32 || packet.esp32) {
+    state.esp32Telemetry = packet.raw_esp32 || packet.esp32;
+    state.lastEsp32Timestamp = now;
+  } else if (packet.dev && String(packet.dev).toUpperCase().includes('ESP32')) {
+    state.esp32Telemetry = packet;
+    state.lastEsp32Timestamp = now;
+  } else if (packet.moist_raw !== undefined || packet.weight_raw !== undefined) {
+    state.esp32Telemetry = packet;
+    state.lastEsp32Timestamp = now;
+  }
+
+  if (packet.device_health) {
+    state.deviceHealth = packet.device_health;
+  }
+
+  // Update composite cache
   state.latestTelemetry = packet;
-  state.lastTelemetryTimestamp = Date.now();
 
-  const isSim = (packet.source === 'simulation' || state.mode === 'simulation');
+  // Render dashboard components
+  renderDeviceStatusAndStaleness();
+}
 
-  // 1. Health & Connection Details
-  dom.valDeviceId.textContent = packet.dev || (isSim ? 'SIM-WS01' : 'UNO-WS01');
-  dom.valUptime.textContent = `${packet.up || 0}s`;
-  dom.valLastReceived.textContent = new Date().toLocaleTimeString();
+function renderDeviceStatusAndStaleness() {
+  const now = Date.now();
+  const isSim = (state.mode === 'simulation');
 
-  const faultList = Array.isArray(packet.faults) ? packet.faults : [];
-  dom.valFaultCount.textContent = faultList.length;
-
+  // Evaluate Uno Status
+  let unoStatus = 'DISCONNECTED';
   if (isSim) {
-    const statusText = state.simIsPaused ? 'Simulation Paused' : `Simulation Active (${packet.dev})`;
-    updateConnectionStatus('ONLINE', statusText);
-  } else {
-    updateConnectionStatus('ONLINE', `${sourceName} Live (${packet.dev})`);
+    unoStatus = (state.simScenario === 'SCENARIO_D') ? 'DISCONNECTED' : (state.simIsPaused ? 'STALE' : 'CONNECTED');
+  } else if (state.deviceHealth?.uno?.status) {
+    unoStatus = state.deviceHealth.uno.status;
+  } else if (state.lastUnoTimestamp) {
+    const elapsed = (now - state.lastUnoTimestamp) / 1000;
+    unoStatus = elapsed <= 5.0 ? 'CONNECTED' : (elapsed <= 15.0 ? 'STALE' : 'DISCONNECTED');
   }
 
-  // 2. Capacitive Soil Moisture Sensor Card
-  dom.moistRawAdc.textContent = (packet.moist_raw !== null && packet.moist_raw !== undefined) 
-    ? `${packet.moist_raw} ADC` : '—';
+  // Evaluate ESP32 Status
+  let espStatus = 'DISCONNECTED';
+  if (isSim) {
+    espStatus = (state.simScenario === 'SCENARIO_C') ? 'DISCONNECTED' : (state.simIsPaused ? 'STALE' : 'CONNECTED');
+  } else if (state.deviceHealth?.esp32?.status) {
+    espStatus = state.deviceHealth.esp32.status;
+  } else if (state.lastEsp32Timestamp) {
+    const elapsed = (now - state.lastEsp32Timestamp) / 1000;
+    espStatus = elapsed <= 5.0 ? 'CONNECTED' : (elapsed <= 15.0 ? 'STALE' : 'DISCONNECTED');
+  }
 
-  if (!packet.moist_ok) {
+  // 1. Update Dual Badges in Header
+  updateDualBadges(unoStatus, espStatus);
+
+  // 2. Update Health Metrics Strip
+  if (dom.valUnoStatus) {
+    dom.valUnoStatus.textContent = unoStatus;
+    dom.valUnoStatus.style.color = (unoStatus === 'CONNECTED') ? 'var(--accent-forest)' : ((unoStatus === 'STALE') ? 'var(--accent-amber)' : 'var(--accent-crimson)');
+  }
+  if (dom.valEspStatus) {
+    dom.valEspStatus.textContent = espStatus;
+    dom.valEspStatus.style.color = (espStatus === 'CONNECTED') ? 'var(--accent-forest)' : ((espStatus === 'STALE') ? 'var(--accent-amber)' : 'var(--accent-crimson)');
+  }
+  if (dom.valUnoLast) {
+    dom.valUnoLast.textContent = state.lastUnoTimestamp ? new Date(state.lastUnoTimestamp).toLocaleTimeString() : 'Never';
+  }
+  if (dom.valEspLast) {
+    dom.valEspLast.textContent = state.lastEsp32Timestamp ? new Date(state.lastEsp32Timestamp).toLocaleTimeString() : 'Never';
+  }
+
+  // 3. Render Module B (ESP32) Sensor Cards: Moisture & Load Cell
+  const esp = state.esp32Telemetry;
+  if (espStatus === 'DISCONNECTED') {
     dom.moistStatusPill.className = 'card-pill fault';
-    dom.moistStatusPill.textContent = 'FAULT';
+    dom.moistStatusPill.textContent = 'OFFLINE';
     dom.moistVal.textContent = '—';
-    dom.moistSubtext.textContent = isSim ? 'Simulated moisture fault active' : 'Sensor disconnected or out of range';
+    dom.moistSubtext.textContent = 'ESP32 disconnected — moisture unavailable';
+    dom.moistRawAdc.textContent = '—';
     dom.moistCalibState.textContent = 'Unavailable';
-  } else if (!packet.moist_cal || packet.moist_pct === null) {
-    dom.moistStatusPill.className = 'card-pill uncalibrated';
-    dom.moistStatusPill.textContent = 'UNCALIBRATED';
-    dom.moistVal.textContent = packet.moist_raw !== null ? packet.moist_raw : '—';
-    dom.moistUnit.textContent = 'raw';
-    dom.moistSubtext.textContent = 'Raw ADC reported. Dual-point calibration required.';
-    dom.moistCalibState.textContent = 'Not Calibrated';
-  } else {
-    dom.moistStatusPill.className = 'card-pill ok';
-    dom.moistStatusPill.textContent = isSim ? 'SIMULATED' : 'CALIBRATED';
-    dom.moistVal.textContent = Number(packet.moist_pct).toFixed(1);
-    dom.moistUnit.textContent = '%';
-    dom.moistSubtext.textContent = packet.moist_pct > 50 ? 'High moisture (organic matter)' : 'Low moisture (inorganic / dry)';
-    dom.moistCalibState.textContent = isSim ? 'Correlated Model ✓' : 'Calibrated ✓';
-  }
 
-  // 3. Load Cell & HX711 Card
-  dom.weightRawCounts.textContent = (packet.weight_raw !== undefined && packet.weight_raw !== null)
-    ? packet.weight_raw.toLocaleString() : '—';
-
-  if (!packet.weight_ok) {
     dom.weightStatusPill.className = 'card-pill fault';
-    dom.weightStatusPill.textContent = 'TIMEOUT';
+    dom.weightStatusPill.textContent = 'OFFLINE';
     dom.weightVal.textContent = '—';
-    dom.weightSubtext.textContent = isSim ? 'Simulated HX711 timeout condition' : 'HX711 not responding on D2/D3';
-    dom.weightCalibState.textContent = 'Communication Error';
+    dom.weightSubtext.textContent = 'ESP32 disconnected — load cell offline';
+    dom.weightRawCounts.textContent = '—';
+    dom.weightCalibState.textContent = 'Unavailable';
     dom.weightTareState.textContent = 'Offline';
-  } else if (!packet.weight_cal || packet.weight_g === null) {
-    dom.weightStatusPill.className = 'card-pill uncalibrated';
-    dom.weightStatusPill.textContent = 'UNCALIBRATED';
-    dom.weightVal.textContent = '—';
-    dom.weightSubtext.textContent = 'Calibration required with reference mass';
-    dom.weightCalibState.textContent = 'Required';
-    dom.weightTareState.textContent = 'Initialized';
-  } else {
-    dom.weightStatusPill.className = 'card-pill ok';
-    dom.weightStatusPill.textContent = isSim ? 'SIMULATED' : 'OPERATIONAL';
-    dom.weightVal.textContent = Number(packet.weight_g).toFixed(1);
-    dom.weightSubtext.textContent = packet.weight_g > 10 ? 'Waste mass present on platform' : 'Empty platform';
-    dom.weightCalibState.textContent = isSim ? 'Synthetic Calibration ✓' : 'Calibrated ✓';
-    dom.weightTareState.textContent = 'Tared ✓';
-  }
+  } else if (espStatus === 'STALE') {
+    dom.moistStatusPill.className = 'card-pill stale';
+    dom.moistStatusPill.textContent = 'STALE';
+    dom.moistSubtext.textContent = `Last known reading (>5s stale)`;
 
-  // 4. Ultrasonic Proximity Sensor Card
-  if (packet.dist_cm === null || packet.dist_cm === undefined || packet.dist_cm < 0) {
-    dom.proxStatusPill.className = 'card-pill fault';
-    dom.proxStatusPill.textContent = 'TIMEOUT';
-    dom.proxVal.textContent = '—';
-    dom.proxSubtext.textContent = isSim ? 'Simulated echo timeout' : 'Echo pulse timed out or out of range';
-    dom.proxDetected.textContent = 'Unknown';
-    dom.proxEchoHealth.textContent = 'No Echo';
-  } else {
-    dom.proxVal.textContent = Number(packet.dist_cm).toFixed(1);
-    dom.proxEchoHealth.textContent = 'Valid Pulse';
-
-    if (packet.prox) {
-      dom.proxStatusPill.className = 'card-pill warn';
-      dom.proxStatusPill.textContent = 'OBJECT DETECTED';
-      dom.proxDetected.textContent = 'Active (≤ 20.0cm)';
-      dom.proxSubtext.textContent = 'Target approaching — auto lid triggered';
+    dom.weightStatusPill.className = 'card-pill stale';
+    dom.weightStatusPill.textContent = 'STALE';
+    dom.weightSubtext.textContent = `Last known mass (>5s stale)`;
+  } else if (esp) {
+    // Moisture Card Active
+    dom.moistRawAdc.textContent = (esp.moist_raw !== null && esp.moist_raw !== undefined) ? `${esp.moist_raw} ADC` : '—';
+    if (!esp.moist_ok) {
+      dom.moistStatusPill.className = 'card-pill fault';
+      dom.moistStatusPill.textContent = 'FAULT';
+      dom.moistVal.textContent = '—';
+      dom.moistSubtext.textContent = isSim ? 'Simulated moisture fault' : 'Sensor disconnected on ADC1 Pin 34';
+      dom.moistCalibState.textContent = 'Unavailable';
+    } else if (!esp.moist_cal || esp.moist_pct === null) {
+      dom.moistStatusPill.className = 'card-pill uncalibrated';
+      dom.moistStatusPill.textContent = 'UNCALIBRATED';
+      dom.moistVal.textContent = esp.moist_raw !== null ? esp.moist_raw : '—';
+      dom.moistUnit.textContent = 'raw';
+      dom.moistSubtext.textContent = 'Raw 12-bit ADC reported. Dual-point calibration required.';
+      dom.moistCalibState.textContent = 'Not Calibrated';
     } else {
-      dom.proxStatusPill.className = 'card-pill ok';
-      dom.proxStatusPill.textContent = 'CLEAR';
-      dom.proxDetected.textContent = 'No Object';
-      dom.proxSubtext.textContent = 'Clear detection zone (> 20.0cm)';
+      dom.moistStatusPill.className = 'card-pill ok';
+      dom.moistStatusPill.textContent = isSim ? 'SIMULATED' : 'CALIBRATED';
+      dom.moistVal.textContent = Number(esp.moist_pct).toFixed(1);
+      dom.moistUnit.textContent = '%';
+      dom.moistSubtext.textContent = esp.moist_pct > 50 ? 'High moisture (organic matter)' : 'Low moisture (inorganic / dry)';
+      dom.moistCalibState.textContent = isSim ? 'ESP32 12-bit Model ✓' : 'Calibrated ✓';
+    }
+
+    // Weight Card Active
+    dom.weightRawCounts.textContent = (esp.weight_raw !== undefined && esp.weight_raw !== null) ? esp.weight_raw.toLocaleString() : '—';
+    if (!esp.weight_ok) {
+      dom.weightStatusPill.className = 'card-pill fault';
+      dom.weightStatusPill.textContent = 'TIMEOUT';
+      dom.weightVal.textContent = '—';
+      dom.weightSubtext.textContent = isSim ? 'Simulated HX711 timeout' : 'HX711 not responding on GPIO 16/4';
+      dom.weightCalibState.textContent = 'Communication Error';
+      dom.weightTareState.textContent = 'Offline';
+    } else if (!esp.weight_cal || esp.weight_g === null) {
+      dom.weightStatusPill.className = 'card-pill uncalibrated';
+      dom.weightStatusPill.textContent = 'UNCALIBRATED';
+      dom.weightVal.textContent = '—';
+      dom.weightSubtext.textContent = 'Calibration required with reference mass';
+      dom.weightCalibState.textContent = 'Required';
+      dom.weightTareState.textContent = 'Initialized';
+    } else {
+      dom.weightStatusPill.className = 'card-pill ok';
+      dom.weightStatusPill.textContent = isSim ? 'SIMULATED' : 'OPERATIONAL';
+      dom.weightVal.textContent = Number(esp.weight_g).toFixed(1);
+      dom.weightSubtext.textContent = esp.weight_g > 10 ? 'Waste mass present on platform' : 'Empty platform';
+      dom.weightCalibState.textContent = isSim ? 'Synthetic Calibration ✓' : 'Calibrated ✓';
+      dom.weightTareState.textContent = 'Tared ✓';
     }
   }
 
-  // 5. Lid Actuator Status Card
-  const lidCmd = (packet.lid_cmd || 'CLOSED').toUpperCase();
-  dom.lidVal.textContent = lidCmd;
-  if (lidCmd === 'OPEN') {
-    dom.lidStatusPill.className = 'card-pill warn';
-    dom.lidStatusPill.textContent = 'OPEN';
-    dom.lidSubtext.textContent = isSim 
-      ? 'Simulated command: 90° angle (Servo has no position feedback)'
-      : 'Commanded angle: 90° (Active deposition window)';
-  } else if (lidCmd === 'OPENING') {
-    dom.lidStatusPill.className = 'card-pill warn';
-    dom.lidStatusPill.textContent = 'OPENING';
-    dom.lidSubtext.textContent = 'Servo moving to open position';
-  } else if (lidCmd === 'CLOSING') {
-    dom.lidStatusPill.className = 'card-pill ok';
-    dom.lidStatusPill.textContent = 'CLOSING';
-    dom.lidSubtext.textContent = 'Hold timer expired; servo returning to 0°';
-  } else {
-    dom.lidStatusPill.className = 'card-pill ok';
-    dom.lidStatusPill.textContent = 'CLOSED';
-    dom.lidSubtext.textContent = isSim
-      ? 'Simulated command: 0° angle (Closed position)'
-      : 'Commanded angle: 0° (Closed)';
+  // 4. Render Module A (Arduino Uno) Sensor Cards: Proximity & Lid
+  const uno = state.unoTelemetry;
+  if (unoStatus === 'DISCONNECTED') {
+    dom.proxStatusPill.className = 'card-pill fault';
+    dom.proxStatusPill.textContent = 'OFFLINE';
+    dom.proxVal.textContent = '—';
+    dom.proxSubtext.textContent = 'Arduino Uno disconnected — proximity offline';
+    dom.proxDetected.textContent = 'Offline';
+    dom.proxEchoHealth.textContent = 'No Signal';
+
+    dom.lidStatusPill.className = 'card-pill fault';
+    dom.lidStatusPill.textContent = 'OFFLINE';
+    dom.lidVal.textContent = uno ? uno.lid_cmd : 'CLOSED';
+    dom.lidSubtext.textContent = 'Uno disconnected — autonomous safety loop active locally';
+  } else if (unoStatus === 'STALE') {
+    dom.proxStatusPill.className = 'card-pill stale';
+    dom.proxStatusPill.textContent = 'STALE';
+    dom.proxSubtext.textContent = `Last known distance (>5s stale)`;
+  } else if (uno) {
+    // Proximity Card Active
+    if (uno.dist_cm === null || uno.dist_cm === undefined || uno.dist_cm < 0) {
+      dom.proxStatusPill.className = 'card-pill fault';
+      dom.proxStatusPill.textContent = 'TIMEOUT';
+      dom.proxVal.textContent = '—';
+      dom.proxSubtext.textContent = isSim ? 'Simulated echo timeout' : 'Echo pulse timed out or out of range';
+      dom.proxDetected.textContent = 'Unknown';
+      dom.proxEchoHealth.textContent = 'No Echo';
+    } else {
+      dom.proxVal.textContent = Number(uno.dist_cm).toFixed(1);
+      dom.proxEchoHealth.textContent = 'Valid Pulse';
+
+      if (uno.prox) {
+        dom.proxStatusPill.className = 'card-pill warn';
+        dom.proxStatusPill.textContent = 'OBJECT DETECTED';
+        dom.proxDetected.textContent = 'Active (≤ 20.0cm)';
+        dom.proxSubtext.textContent = 'Target approaching — auto lid triggered';
+      } else {
+        dom.proxStatusPill.className = 'card-pill ok';
+        dom.proxStatusPill.textContent = 'CLEAR';
+        dom.proxDetected.textContent = 'No Object';
+        dom.proxSubtext.textContent = 'Clear detection zone (> 20.0cm)';
+      }
+    }
+
+    // Lid Card Active
+    const lidCmd = (uno.lid_cmd || 'CLOSED').toUpperCase();
+    dom.lidVal.textContent = lidCmd;
+    if (lidCmd === 'OPEN') {
+      dom.lidStatusPill.className = 'card-pill warn';
+      dom.lidStatusPill.textContent = 'OPEN';
+      dom.lidSubtext.textContent = isSim
+        ? 'Simulated command: 90° angle (Servo has no position feedback)'
+        : 'Commanded angle: 90° (Active deposition window)';
+    } else if (lidCmd === 'OPENING') {
+      dom.lidStatusPill.className = 'card-pill warn';
+      dom.lidStatusPill.textContent = 'OPENING';
+      dom.lidSubtext.textContent = 'Servo moving to open position';
+    } else if (lidCmd === 'CLOSING') {
+      dom.lidStatusPill.className = 'card-pill ok';
+      dom.lidStatusPill.textContent = 'CLOSING';
+      dom.lidSubtext.textContent = 'Hold timer expired; servo returning to 0°';
+    } else {
+      dom.lidStatusPill.className = 'card-pill ok';
+      dom.lidStatusPill.textContent = 'CLOSED';
+      dom.lidSubtext.textContent = isSim
+        ? 'Simulated command: 0° angle (Closed position)'
+        : 'Commanded angle: 0° (Closed)';
+    }
   }
 
-  // 6. Update Alerts Display
-  renderAlerts(packet, faultList);
+  // 5. Fault Aggregation & Alert Rendering
+  const allFaults = [];
+  if (uno && Array.isArray(uno.faults)) allFaults.push(...uno.faults);
+  if (esp && Array.isArray(esp.faults)) allFaults.push(...esp.faults);
+  if (unoStatus === 'DISCONNECTED' && !allFaults.includes('UNO_OFFLINE')) allFaults.push('UNO_OFFLINE');
+  if (espStatus === 'DISCONNECTED' && !allFaults.includes('ESP32_OFFLINE')) allFaults.push('ESP32_OFFLINE');
 
-  // 7. Sensor Machine Learning Analytics Inference
-  requestMlInference(packet);
+  dom.valFaultCount.textContent = allFaults.length;
+  renderAlerts(state.latestTelemetry || {}, allFaults);
+
+  // 6. Request ML inference with Composite Telemetry
+  const compositeForMl = {
+    v: 1,
+    dev: 'COMPOSITE',
+    source: isSim ? 'simulation' : 'hardware',
+    timestamp: new Date().toISOString(),
+    dist_cm: (unoStatus !== 'DISCONNECTED' && uno) ? uno.dist_cm : null,
+    prox: (unoStatus !== 'DISCONNECTED' && uno) ? Boolean(uno.prox) : false,
+    lid_cmd: (unoStatus !== 'DISCONNECTED' && uno) ? uno.lid_cmd : 'CLOSED',
+    moist_raw: (espStatus !== 'DISCONNECTED' && esp) ? esp.moist_raw : null,
+    moist_pct: (espStatus !== 'DISCONNECTED' && esp) ? esp.moist_pct : null,
+    moist_ok: (espStatus !== 'DISCONNECTED' && esp) ? Boolean(esp.moist_ok) : false,
+    weight_g: (espStatus !== 'DISCONNECTED' && esp) ? esp.weight_g : null,
+    weight_raw: (espStatus !== 'DISCONNECTED' && esp) ? esp.weight_raw : null,
+    weight_ok: (espStatus !== 'DISCONNECTED' && esp) ? Boolean(esp.weight_ok) : false,
+    faults: allFaults
+  };
+  requestMlInference(compositeForMl);
 }
 
 // ============================================================================
-// CONNECTION STATUS BADGE MANAGEMENT
+// DUAL CONNECTION STATUS BADGE MANAGEMENT
 // ============================================================================
-function updateConnectionStatus(status, text) {
-  dom.connBadge.className = 'badge-status';
-  if (status === 'ONLINE') {
-    dom.connBadge.classList.add('online');
-    dom.connText.textContent = text || 'Live Telemetry';
-  } else if (status === 'STALE') {
-    dom.connBadge.classList.add('stale');
-    dom.connText.textContent = text || 'Telemetry Stale (>5s)';
-  } else if (status === 'DISCONNECTED') {
-    dom.connBadge.classList.add('offline');
-    dom.connText.textContent = text || 'Hardware Disconnected';
-  } else {
-    dom.connBadge.classList.add('connecting');
-    dom.connText.textContent = text || 'Connecting...';
+function updateDualBadges(unoStatus, espStatus) {
+  if (dom.unoConnBadge && dom.unoConnText) {
+    dom.unoConnBadge.className = 'badge-status';
+    if (unoStatus === 'CONNECTED') {
+      dom.unoConnBadge.classList.add('online');
+      dom.unoConnText.textContent = 'Uno: Live (D4-D6)';
+    } else if (unoStatus === 'STALE') {
+      dom.unoConnBadge.classList.add('stale');
+      dom.unoConnText.textContent = 'Uno: Stale (>5s)';
+    } else {
+      dom.unoConnBadge.classList.add('offline');
+      dom.unoConnText.textContent = 'Uno: Offline';
+    }
+  }
+
+  if (dom.espConnBadge && dom.espConnText) {
+    dom.espConnBadge.className = 'badge-status';
+    if (espStatus === 'CONNECTED') {
+      dom.espConnBadge.classList.add('online');
+      dom.espConnText.textContent = 'ESP32: Live (34, 16/4)';
+    } else if (espStatus === 'STALE') {
+      dom.espConnBadge.classList.add('stale');
+      dom.espConnText.textContent = 'ESP32: Stale (>5s)';
+    } else {
+      dom.espConnBadge.classList.add('offline');
+      dom.espConnText.textContent = 'ESP32: Offline';
+    }
   }
 }
 
 // Check Staleness Loop (Runs every 2 seconds)
 setInterval(() => {
-  if (state.mode === 'simulation') {
-    if (state.simIsPaused) {
-      updateConnectionStatus('STALE', 'Simulation Paused');
-    } else {
-      updateConnectionStatus('ONLINE', `Simulation Active (${state.simScenario})`);
-    }
-    return;
-  }
-
-  // Live Hardware checks
-  if (!state.lastTelemetryTimestamp) {
-    updateConnectionStatus('DISCONNECTED', 'Awaiting Hardware Telemetry...');
-    return;
-  }
-
-  const elapsed = (Date.now() - state.lastTelemetryTimestamp) / 1000;
-  if (elapsed > 15) {
-    updateConnectionStatus('DISCONNECTED', `Hardware Disconnected (${Math.round(elapsed)}s since packet)`);
-  } else if (elapsed > 5) {
-    updateConnectionStatus('STALE', `Hardware Telemetry Stale (${Math.round(elapsed)}s ago)`);
-  }
+  renderDeviceStatusAndStaleness();
 }, 2000);
 
 // ============================================================================
@@ -508,167 +642,189 @@ const simulationEngine = {
     }
   },
 
+  unoSeq: 100,
+  espSeq: 100,
   tick() {
     if (state.simIsPaused) return;
 
-    this.seq++;
     this.up += Math.round(state.simIntervalMs / 1000);
     this.cycleTicks++;
 
-    const faultList = [];
-    let moistOk = true;
-    let weightOk = true;
+    const isUnoActive = (state.simScenario !== 'SCENARIO_D'); // SCENARIO_D: ESP32 only, Uno offline
+    const isEspActive = (state.simScenario !== 'SCENARIO_C'); // SCENARIO_C: Uno only, ESP32 offline
 
-    // Check fault injection
-    if (state.simFaultActive) {
-      faultList.push('HX711_TIMEOUT', 'MOISTURE_OFFLINE');
-      moistOk = false;
-      weightOk = false;
-    }
+    // -------------------------------------------------------------------------
+    // 1. SIMULATE MODULE A (ARDUINO UNO): PROXIMITY & LID STATE MACHINE
+    // -------------------------------------------------------------------------
+    if (isUnoActive) {
+      this.unoSeq++;
+      const unoFaults = [];
+      const intervalSec = state.simIntervalMs / 1000;
+      const holdTicksTotal = Math.max(1, Math.round(4.0 / intervalSec));
 
-    // 1. Proximity & Lid Sequence State Machine (Hold open duration: 4 seconds)
-    const intervalSec = state.simIntervalMs / 1000;
-    const holdTicksTotal = Math.max(1, Math.round(4.0 / intervalSec));
+      switch (this.cycleState) {
+        case 'APPROACH_WAIT':
+          this.lidCmd = 'CLOSED';
+          this.prox = false;
+          this.distanceCm = 65.0 + (Math.sin(this.cycleTicks * 0.5) * 6);
+          if (this.cycleTicks >= 5) {
+            this.cycleState = 'APPROACHING';
+            this.cycleTicks = 0;
+          }
+          break;
 
-    switch (this.cycleState) {
-      case 'APPROACH_WAIT':
-        this.lidCmd = 'CLOSED';
-        this.prox = false;
-        // Natural background distance variation (55 - 75 cm)
-        this.distanceCm = 65.0 + (Math.sin(this.cycleTicks * 0.5) * 6);
-        if (this.cycleTicks >= 5) {
-          this.cycleState = 'APPROACHING';
-          this.cycleTicks = 0;
-        }
-        break;
+        case 'APPROACHING':
+          this.distanceCm = Math.max(12.0, 48.0 - (this.cycleTicks * 12.0));
+          if (this.distanceCm <= 20.0) {
+            this.prox = true;
+            const prevLid = this.lidCmd;
+            this.lidCmd = 'OPEN';
+            this.cycleState = 'HOLDING';
+            this.cycleTicks = 0;
+            this.holdTicksRemaining = holdTicksTotal;
+            this.recordSimLidEvent('PROXIMITY_DETECTED (SIM)', prevLid, 'OPEN', this.distanceCm);
+            logTerminal(`[SIM-UNO] Proximity triggered (dist: ${this.distanceCm.toFixed(1)} cm ≤ 20cm). Servo commanded 90° OPEN.`, 'out');
+          }
+          break;
 
-      case 'APPROACHING':
-        // Object steadily approaches the bin
-        this.distanceCm = Math.max(12.0, 48.0 - (this.cycleTicks * 12.0));
-        if (this.distanceCm <= 20.0) {
+        case 'HOLDING':
           this.prox = true;
+          this.distanceCm = 13.5 + (Math.random() * 2.0);
+          this.holdTicksRemaining--;
+          if (this.holdTicksRemaining <= 0) {
+            this.cycleState = 'DEPARTING';
+            this.cycleTicks = 0;
+          }
+          break;
+
+        case 'DEPARTING':
+          this.distanceCm = 28.0 + (this.cycleTicks * 14.0);
+          this.prox = false;
+          if (this.distanceCm > 20.0) {
+            this.cycleState = 'CLOSING';
+            this.cycleTicks = 0;
+          }
+          break;
+
+        case 'CLOSING':
           const prevLid = this.lidCmd;
-          this.lidCmd = 'OPEN';
-          this.cycleState = 'HOLDING';
-          this.cycleTicks = 0;
-          this.holdTicksRemaining = holdTicksTotal;
-          this.recordSimLidEvent('PROXIMITY_DETECTED (SIM)', prevLid, 'OPEN', this.distanceCm);
-          logTerminal(`[SIM] Proximity triggered (dist: ${this.distanceCm.toFixed(1)} cm ≤ 20cm). Servo commanded 90° OPEN.`, 'out');
-        }
-        break;
+          this.lidCmd = 'CLOSED';
+          this.recordSimLidEvent('HOLD_TIMER_EXPIRED (SIM)', prevLid, 'CLOSED', this.distanceCm);
+          logTerminal(`[SIM-UNO] Hold timer (4s) expired. Servo commanded 0° CLOSED.`, 'out');
 
-      case 'HOLDING':
-        this.prox = true;
-        this.distanceCm = 13.5 + (Math.random() * 2.0);
-        this.holdTicksRemaining--;
-        if (this.holdTicksRemaining <= 0) {
-          this.cycleState = 'DEPARTING';
-          this.cycleTicks = 0;
-        }
-        break;
+          if (state.simScenario === 'SCENARIO_B') {
+            const deposit = 75 + Math.round(Math.random() * 65);
+            this.binFillMass += deposit;
+            this.moistPercent = Math.min(88.0, this.moistPercent + (Math.random() * 4.5));
+            logTerminal(`[SIM: Scenario B] Deposited +${deposit}g organic waste. Cumulative mass: ${this.binFillMass.toFixed(0)}g.`, 'in');
+          }
 
-      case 'DEPARTING':
-        // Object moving away from bin
-        this.distanceCm = 28.0 + (this.cycleTicks * 14.0);
+          this.cycleState = 'APPROACH_WAIT';
+          this.cycleTicks = 0;
+          break;
+      }
+
+      let distCm = Math.round(this.distanceCm * 10) / 10;
+      if (state.simFaultActive && state.simScenario === 'SCENARIO_E') {
+        distCm = null;
         this.prox = false;
-        if (this.distanceCm > 20.0) {
-          this.cycleState = 'CLOSING';
-          this.cycleTicks = 0;
-        }
-        break;
+        unoFaults.push('ULTRASONIC_TIMEOUT');
+      }
 
-      case 'CLOSING':
-        const prevLid = this.lidCmd;
-        this.lidCmd = 'CLOSED';
-        this.recordSimLidEvent('HOLD_TIMER_EXPIRED (SIM)', prevLid, 'CLOSED', this.distanceCm);
-        logTerminal(`[SIM] Hold timer (4s) expired. Servo commanded 0° CLOSED.`, 'out');
+      const unoPacket = {
+        v: 1,
+        dev: "SIM-UNO01",
+        seq: this.unoSeq,
+        up: this.up,
+        source: "simulation",
+        sim_session_id: state.simSessionId,
+        scenario: state.simScenario,
+        dist_cm: distCm,
+        prox: this.prox,
+        lid_cmd: this.lidCmd,
+        faults: unoFaults
+      };
 
-        // Scenario B: Accumulate deposited waste mass after lid cycle
-        if (state.simScenario === 'SCENARIO_B') {
-          const deposit = 75 + Math.round(Math.random() * 65);
-          this.binFillMass += deposit;
-          this.moistPercent = Math.min(88.0, this.moistPercent + (Math.random() * 4.5));
-          logTerminal(`[SIM: Scenario B] Deposited +${deposit}g organic waste. Cumulative simulated mass: ${this.binFillMass.toFixed(0)}g.`, 'in');
-        }
-
-        this.cycleState = 'APPROACH_WAIT';
-        this.cycleTicks = 0;
-        break;
+      processTelemetryPacket(unoPacket, 'Simulated Uno');
     }
 
-    // 2. Weight Sensor Synthesis
-    let weightG;
-    let weightRaw;
-    if (state.simScenario === 'SCENARIO_B') {
-      weightG = this.binFillMass + (Math.random() * 2.0 - 1.0);
-    } else {
-      weightG = Math.max(0, this.weightG + (Math.sin(this.up * 0.1) * 2.5) + (Math.random() * 1.0 - 0.5));
+    // -------------------------------------------------------------------------
+    // 2. SIMULATE MODULE B (ESP32): MOISTURE & LOAD CELL
+    // -------------------------------------------------------------------------
+    if (isEspActive) {
+      this.espSeq++;
+      const espFaults = [];
+      let moistOk = true;
+      let weightOk = true;
+
+      if (state.simFaultActive && state.simScenario === 'SCENARIO_E') {
+        espFaults.push('HX711_TIMEOUT', 'MOISTURE_OFFLINE');
+        moistOk = false;
+        weightOk = false;
+      }
+
+      let weightG;
+      if (state.simScenario === 'SCENARIO_B') {
+        weightG = this.binFillMass + (Math.random() * 2.0 - 1.0);
+      } else {
+        weightG = Math.max(0, this.weightG + (Math.sin(this.up * 0.1) * 2.5) + (Math.random() * 1.0 - 0.5));
+      }
+      let weightRaw = Math.round(100000 + (weightG * 420.0));
+
+      let moistPct;
+      if (state.simScenario === 'SCENARIO_B') {
+        moistPct = Math.min(100, Math.max(0, this.moistPercent + (Math.sin(this.up * 0.05) * 1.5)));
+      } else {
+        moistPct = Math.min(100, Math.max(0, this.moistPercent + (Math.sin(this.up * 0.08) * 8.0) + (Math.random() * 1.0 - 0.5)));
+      }
+
+      // ESP32 12-Bit ADC Model: Dry ~3200 ADC, Wet ~1400 ADC
+      const adcNoise = Math.round(Math.random() * 8 - 4);
+      let moistRaw = Math.max(200, Math.min(3950, Math.round(3200 - (moistPct / 100.0) * 1800 + adcNoise)));
+
+      if (!moistOk) {
+        moistPct = null;
+        moistRaw = 4095;
+      }
+      if (!weightOk) {
+        weightG = null;
+        weightRaw = 0;
+      }
+
+      const espPacket = {
+        v: 1,
+        dev: "SIM-ESP01",
+        seq: this.espSeq,
+        up: this.up,
+        source: "simulation",
+        sim_session_id: state.simSessionId,
+        scenario: state.simScenario,
+        moist_raw: moistRaw,
+        moist_pct: moistPct !== null ? Math.round(moistPct * 10) / 10 : null,
+        moist_ok: moistOk,
+        moist_cal: true,
+        weight_raw: weightRaw,
+        weight_g: weightG !== null ? Math.round(weightG * 10) / 10 : null,
+        weight_ok: weightOk,
+        weight_cal: true,
+        faults: espFaults
+      };
+
+      processTelemetryPacket(espPacket, 'Simulated ESP32');
+
+      // Update simulation charts
+      if (weightG !== null || moistPct !== null) {
+        state.simHistoryData.push({
+          timestamp: new Date().toISOString(),
+          weight_g: weightG !== null ? Math.round(weightG * 10) / 10 : null,
+          moist_pct: moistPct !== null ? Math.round(moistPct * 10) / 10 : null
+        });
+        if (state.simHistoryData.length > 50) state.simHistoryData.shift();
+
+        renderLineChart(dom.chartWeightWrap, state.simHistoryData, 'weight_g', 'Weight (g)', '#15803d');
+        renderLineChart(dom.chartMoistureWrap, state.simHistoryData, 'moist_pct', 'Moisture (%)', '#0f766e');
+      }
     }
-    weightRaw = Math.round(100000 + (weightG * 420.5));
-
-    // 3. Capacitive Soil Moisture Sensor Synthesis (Correlated ADC)
-    let moistPct;
-    let moistRaw;
-    if (state.simScenario === 'SCENARIO_B') {
-      moistPct = Math.min(100, Math.max(0, this.moistPercent + (Math.sin(this.up * 0.05) * 1.5)));
-    } else {
-      moistPct = Math.min(100, Math.max(0, this.moistPercent + (Math.sin(this.up * 0.08) * 8.0) + (Math.random() * 1.0 - 0.5)));
-    }
-    // Capacitive sensor model: Dry ~850 ADC, Wet ~250 ADC (ADC decreases with moisture)
-    const adcNoise = Math.round(Math.random() * 4 - 2);
-    moistRaw = Math.max(50, Math.min(980, Math.round(850 - (moistPct / 100.0) * 600 + adcNoise)));
-
-    // Handle injected faults
-    if (!moistOk) {
-      moistPct = null;
-      moistRaw = 1023;
-    }
-    if (!weightOk) {
-      weightG = null;
-      weightRaw = 0;
-    }
-
-    // Scenario C special handling if not faulted
-    let distCm = Math.round(this.distanceCm * 10) / 10;
-    if (state.simScenario === 'SCENARIO_C' && !state.simFaultActive) {
-      distCm = 85.0;
-      this.prox = false;
-      this.lidCmd = 'CLOSED';
-      faultList.push('HARDWARE_UNAVAILABLE');
-    }
-
-    // Build unified telemetry packet
-    const packet = {
-      v: "1.0",
-      dev: "SIM-WS01",
-      seq: this.seq,
-      up: this.up,
-      source: "simulation",
-      sim_session_id: state.simSessionId,
-      scenario: state.simScenario,
-      moist_raw: moistRaw,
-      moist_pct: moistPct !== null ? Math.round(moistPct * 10) / 10 : null,
-      moist_ok: moistOk,
-      moist_cal: true,
-      weight_raw: weightRaw,
-      weight_g: weightG !== null ? Math.round(weightG * 10) / 10 : null,
-      weight_ok: weightOk,
-      weight_cal: true,
-      dist_cm: distCm,
-      prox: this.prox,
-      lid_cmd: this.lidCmd,
-      faults: faultList
-    };
-
-    // Process through the common dashboard rendering pipeline
-    processTelemetryPacket(packet, 'Synthetic Engine');
-
-    // Add to isolated simulation chart buffer (Zero production log pollution!)
-    state.simHistoryData.push(packet);
-    if (state.simHistoryData.length > 50) state.simHistoryData.shift();
-
-    renderLineChart(dom.chartWeightWrap, state.simHistoryData, 'weight_g', 'Weight (g)', '#15803d');
-    renderLineChart(dom.chartMoistureWrap, state.simHistoryData, 'moist_pct', 'Moisture (%)', '#0f766e');
   }
 };
 
@@ -1331,15 +1487,25 @@ async function pollBackendTelemetry() {
     const data = await res.json();
     state.isBackendConnected = true;
 
-    if (data && data.telemetry) {
-      processTelemetryPacket(data.telemetry, 'Backend API');
-    } else {
-      updateConnectionStatus('DISCONNECTED', 'Backend Connected • Awaiting Arduino Packet');
+    if (data) {
+      if (data.device_health) {
+        state.deviceHealth = data.device_health;
+      }
+      if (data.telemetry) {
+        processTelemetryPacket(data.telemetry, 'Backend API');
+      } else {
+        renderDeviceStatusAndStaleness();
+      }
     }
   } catch (err) {
     state.isBackendConnected = false;
     if (!state.isSerialConnected) {
-      updateConnectionStatus('DISCONNECTED', 'Backend Offline • Connect Gateway or Direct USB');
+      state.deviceHealth = {
+        overall_status: 'ALL_OFFLINE',
+        uno: { status: 'DISCONNECTED', connected: false },
+        esp32: { status: 'DISCONNECTED', connected: false }
+      };
+      renderDeviceStatusAndStaleness();
     }
   }
 }

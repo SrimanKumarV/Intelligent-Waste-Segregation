@@ -19,6 +19,11 @@ const TELEMETRY_FILE = path.join(DATA_DIR, 'telemetry.jsonl');
 const LID_EVENTS_FILE = path.join(DATA_DIR, 'lid_events.jsonl');
 const CATEGORIES_FILE = path.join(DATA_DIR, 'classifications.jsonl');
 
+let latestUnoTelemetry = null;
+let lastUnoReceivedTime = null;
+let latestEsp32Telemetry = null;
+let lastEsp32ReceivedTime = null;
+
 let latestTelemetry = null;
 let lastReceivedTime = null;
 let lastLidState = 'CLOSED';
@@ -26,32 +31,186 @@ let monitoringMode = 'hardware';
 let simulationStartedAt = null;
 let simulationSessionId = null;
 
-function getDeviceHealth() {
-  if (!latestTelemetry) {
-    return {
-      status: 'NO_DATA',
-      connected: false,
-      device_id: null,
-      seconds_since_last_packet: null,
-      uptime_seconds: 0,
-      message: 'No sensor telemetry received yet. Awaiting hardware connection.'
-    };
+function getDevicesHealth() {
+  const now = Date.now();
+
+  // Uno
+  let unoStatus = 'DISCONNECTED';
+  let unoElapsed = null;
+  let unoConnected = false;
+  if (lastUnoReceivedTime) {
+    unoElapsed = Math.round(((now - lastUnoReceivedTime) / 1000) * 10) / 10;
+    if (unoElapsed <= 5.0) {
+      unoStatus = 'CONNECTED';
+      unoConnected = true;
+    } else if (unoElapsed <= 15.0) {
+      unoStatus = 'STALE';
+      unoConnected = false;
+    } else {
+      unoStatus = 'DISCONNECTED';
+      unoConnected = false;
+    }
   }
 
-  const elapsed = ((Date.now() - lastReceivedTime) / 1000);
-  let connStatus = 'ONLINE';
-  if (elapsed > 15) connStatus = 'DISCONNECTED';
-  else if (elapsed > 5) connStatus = 'STALE';
+  // ESP32
+  let espStatus = 'DISCONNECTED';
+  let espElapsed = null;
+  let espConnected = false;
+  if (lastEsp32ReceivedTime) {
+    espElapsed = Math.round(((now - lastEsp32ReceivedTime) / 1000) * 10) / 10;
+    if (espElapsed <= 5.0) {
+      espStatus = 'CONNECTED';
+      espConnected = true;
+    } else if (espElapsed <= 15.0) {
+      espStatus = 'STALE';
+      espConnected = false;
+    } else {
+      espStatus = 'DISCONNECTED';
+      espConnected = false;
+    }
+  }
+
+  let overall = 'ALL_OFFLINE';
+  if (unoConnected && espConnected) overall = 'BOTH_CONNECTED';
+  else if (unoConnected) overall = 'UNO_ONLY';
+  else if (espConnected) overall = 'ESP32_ONLY';
 
   return {
-    status: connStatus,
-    connected: (connStatus === 'ONLINE'),
-    device_id: latestTelemetry.dev,
-    seconds_since_last_packet: Math.round(elapsed * 10) / 10,
-    uptime_seconds: latestTelemetry.up,
-    last_received_at: new Date(lastReceivedTime).toISOString(),
-    faults: latestTelemetry.faults || []
+    overall_status: overall,
+    timestamp: new Date().toISOString(),
+    uno: {
+      device_id: (latestUnoTelemetry && latestUnoTelemetry.dev) || 'UNO-WS01',
+      device_name: 'Arduino Uno (Proximity & Lid)',
+      status: unoStatus,
+      connected: unoConnected,
+      seconds_since_last_packet: unoElapsed,
+      last_received_at: lastUnoReceivedTime ? new Date(lastUnoReceivedTime).toISOString() : null,
+      uptime_seconds: (latestUnoTelemetry && latestUnoTelemetry.up) || 0,
+      faults: (latestUnoTelemetry && latestUnoTelemetry.faults) || []
+    },
+    esp32: {
+      device_id: (latestEsp32Telemetry && latestEsp32Telemetry.dev) || 'ESP32-WS01',
+      device_name: 'ESP32 (Moisture & Load Cell)',
+      status: espStatus,
+      connected: espConnected,
+      seconds_since_last_packet: espElapsed,
+      last_received_at: lastEsp32ReceivedTime ? new Date(lastEsp32ReceivedTime).toISOString() : null,
+      uptime_seconds: (latestEsp32Telemetry && latestEsp32Telemetry.up) || 0,
+      faults: (latestEsp32Telemetry && latestEsp32Telemetry.faults) || []
+    }
   };
+}
+
+function getDeviceHealth() {
+  const devices = getDevicesHealth();
+  const connected = (devices.overall_status === 'BOTH_CONNECTED' || devices.overall_status === 'UNO_ONLY' || devices.overall_status === 'ESP32_ONLY');
+  const status = (devices.overall_status === 'BOTH_CONNECTED') ? 'ONLINE' : (connected ? 'PARTIAL' : 'DISCONNECTED');
+
+  return {
+    status: status,
+    connected: connected,
+    overall_status: devices.overall_status,
+    device_id: 'MULTI-DEVICE',
+    uno: devices.uno,
+    esp32: devices.esp32,
+    seconds_since_last_packet: devices.uno.seconds_since_last_packet !== null ? devices.uno.seconds_since_last_packet : devices.esp32.seconds_since_last_packet,
+    uptime_seconds: Math.max(devices.uno.uptime_seconds, devices.esp32.uptime_seconds),
+    last_received_at: lastReceivedTime ? new Date(lastReceivedTime).toISOString() : null
+  };
+}
+
+function getCombinedTelemetry() {
+  const health = getDevicesHealth();
+  const now = new Date().toISOString();
+
+  const uno = latestUnoTelemetry;
+  const esp32 = latestEsp32Telemetry;
+
+  const faultsSet = new Set();
+  if (uno && Array.isArray(uno.faults)) uno.faults.forEach(f => faultsSet.add(f));
+  if (esp32 && Array.isArray(esp32.faults)) esp32.faults.forEach(f => faultsSet.add(f));
+  if (health.uno.status === 'DISCONNECTED') faultsSet.add('UNO_OFFLINE');
+  if (health.esp32.status === 'DISCONNECTED') faultsSet.add('ESP32_OFFLINE');
+
+  return {
+    v: 1,
+    source: (monitoringMode === 'simulation') ? 'simulation' : 'hardware',
+    timestamp: now,
+    device_health: health,
+
+    // Module A (Arduino Uno): Proximity & Lid
+    dist_cm: uno ? uno.dist_cm : null,
+    prox: uno ? Boolean(uno.prox) : false,
+    lid_cmd: (uno && uno.lid_cmd) ? uno.lid_cmd : 'CLOSED',
+    uno_stale: (health.uno.status !== 'CONNECTED'),
+    uno_received_at: lastUnoReceivedTime ? new Date(lastUnoReceivedTime).toISOString() : null,
+    uno_seq: uno ? uno.seq : null,
+    uno_up: uno ? uno.up : 0,
+
+    // Module B (ESP32): Moisture & Weight
+    moist_raw: esp32 ? esp32.moist_raw : null,
+    moist_pct: esp32 ? esp32.moist_pct : null,
+    moist_ok: (esp32 && esp32.moist_ok !== undefined) ? Boolean(esp32.moist_ok) : false,
+    moist_cal: (esp32 && esp32.moist_cal !== undefined) ? Boolean(esp32.moist_cal) : false,
+    weight_g: esp32 ? esp32.weight_g : null,
+    weight_raw: esp32 ? esp32.weight_raw : null,
+    weight_ok: (esp32 && esp32.weight_ok !== undefined) ? Boolean(esp32.weight_ok) : false,
+    weight_cal: (esp32 && esp32.weight_cal !== undefined) ? Boolean(esp32.weight_cal) : false,
+    esp32_stale: (health.esp32.status !== 'CONNECTED'),
+    esp32_received_at: lastEsp32ReceivedTime ? new Date(lastEsp32ReceivedTime).toISOString() : null,
+    esp32_seq: esp32 ? esp32.seq : null,
+    esp32_up: esp32 ? esp32.up : 0,
+
+    faults: Array.from(faultsSet),
+    raw_uno: uno,
+    raw_esp32: esp32
+  };
+}
+
+function ingestTelemetry(rec, explicitTarget = '') {
+  const now = Date.now();
+  rec.received_at = new Date(now).toISOString();
+
+  let target = explicitTarget;
+  if (!target) {
+    const devStr = String(rec.dev || '').toUpperCase();
+    if (devStr.includes('UNO')) target = 'uno';
+    else if (devStr.includes('ESP32')) target = 'esp32';
+    else if (rec.dist_cm !== undefined && rec.moist_raw === undefined && rec.weight_raw === undefined) target = 'uno';
+    else if (rec.moist_raw !== undefined || rec.weight_raw !== undefined) target = 'esp32';
+    else target = 'composite';
+  }
+
+  if (target === 'uno') {
+    latestUnoTelemetry = rec;
+    lastUnoReceivedTime = now;
+
+    if (rec.lid_cmd && rec.lid_cmd !== lastLidState) {
+      const ev = {
+        timestamp: rec.received_at,
+        device: rec.dev,
+        previous_state: lastLidState,
+        new_state: rec.lid_cmd,
+        trigger: rec.prox ? 'PROXIMITY_DETECTED' : 'AUTO_TIMEOUT_OR_MANUAL',
+        distance_cm: rec.dist_cm
+      };
+      fs.appendFileSync(LID_EVENTS_FILE, JSON.stringify(ev) + '\n');
+      lastLidState = rec.lid_cmd;
+    }
+  } else if (target === 'esp32') {
+    latestEsp32Telemetry = rec;
+    lastEsp32ReceivedTime = now;
+  } else {
+    latestUnoTelemetry = rec;
+    lastUnoReceivedTime = now;
+    latestEsp32Telemetry = rec;
+    lastEsp32ReceivedTime = now;
+  }
+
+  latestTelemetry = getCombinedTelemetry();
+  lastReceivedTime = now;
+  fs.appendFileSync(TELEMETRY_FILE, JSON.stringify(rec) + '\n');
+  return { success: true, target: target, seq: rec.seq };
 }
 
 function getCategoryStats() {
@@ -113,12 +272,46 @@ const server = http.createServer((req, res) => {
     if (pathname === '/api/health' && req.method === 'GET') {
       res.writeHead(200);
       res.end(JSON.stringify(getDeviceHealth()));
+    } else if (pathname === '/api/devices/status' && req.method === 'GET') {
+      res.writeHead(200);
+      res.end(JSON.stringify(getDevicesHealth()));
+    } else if (pathname === '/api/telemetry/combined' && req.method === 'GET') {
+      res.writeHead(200);
+      res.end(JSON.stringify(getCombinedTelemetry()));
     } else if (pathname === '/api/telemetry/latest' && req.method === 'GET') {
       res.writeHead(200);
       res.end(JSON.stringify({
         device_health: getDeviceHealth(),
-        telemetry: latestTelemetry
+        telemetry: getCombinedTelemetry()
       }));
+    } else if (pathname === '/api/telemetry/uno' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const rec = JSON.parse(body);
+          const result = ingestTelemetry(rec, 'uno');
+          res.writeHead(200);
+          res.end(JSON.stringify(result));
+        } catch (e) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ success: false, error: e.message }));
+        }
+      });
+    } else if (pathname === '/api/telemetry/esp32' && req.method === 'POST') {
+      let body = '';
+      req.on('data', chunk => { body += chunk; });
+      req.on('end', () => {
+        try {
+          const rec = JSON.parse(body);
+          const result = ingestTelemetry(rec, 'esp32');
+          res.writeHead(200);
+          res.end(JSON.stringify(result));
+        } catch (e) {
+          res.writeHead(400);
+          res.end(JSON.stringify({ success: false, error: e.message }));
+        }
+      });
     } else if (pathname === '/api/telemetry/history' && req.method === 'GET') {
       const history = [];
       if (fs.existsSync(TELEMETRY_FILE)) {
@@ -152,26 +345,9 @@ const server = http.createServer((req, res) => {
       req.on('end', () => {
         try {
           const rec = JSON.parse(body);
-          rec.received_at = new Date().toISOString();
-          latestTelemetry = rec;
-          lastReceivedTime = Date.now();
-
-          // Check Lid transition
-          if (rec.lid_cmd && rec.lid_cmd !== lastLidState) {
-            const ev = {
-              timestamp: rec.received_at,
-              previous_state: lastLidState,
-              new_state: rec.lid_cmd,
-              trigger: rec.prox ? 'PROXIMITY_DETECTED' : 'AUTO_TIMEOUT_OR_MANUAL',
-              distance_cm: rec.dist_cm
-            };
-            fs.appendFileSync(LID_EVENTS_FILE, JSON.stringify(ev) + '\n');
-            lastLidState = rec.lid_cmd;
-          }
-
-          fs.appendFileSync(TELEMETRY_FILE, JSON.stringify(rec) + '\n');
+          const result = ingestTelemetry(rec, '');
           res.writeHead(200);
-          res.end(JSON.stringify({ success: true, seq: rec.seq }));
+          res.end(JSON.stringify(result));
         } catch (e) {
           res.writeHead(400);
           res.end(JSON.stringify({ success: false, error: e.message }));

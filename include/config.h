@@ -23,9 +23,10 @@
 
 // ============================================================================
 // SYSTEM IDENTIFICATION & TELEMETRY PROTOCOL
+// Module A: Dedicated Proximity Detection & Autonomous Lid Servo Controller
 // ============================================================================
-#define SYSTEM_NAME             "Intelligent Waste Segregation"
-#define FIRMWARE_VERSION        "2.0.0-UNO"
+#define SYSTEM_NAME             "Intelligent Waste Segregation (Module A)"
+#define FIRMWARE_VERSION        "2.1.0-UNO"
 #define DEVICE_ID               "UNO-WS01"
 #define TELEMETRY_PROTOCOL_VER  1
 #define SERIAL_BAUD_RATE        115200

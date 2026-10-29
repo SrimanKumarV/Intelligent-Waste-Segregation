@@ -36,15 +36,21 @@
           </div>
         </div>
 
-        <div id="conn-badge" class="badge-status connecting">
-          <span class="status-indicator-dot"></span>
-          <span id="conn-text">Awaiting Telemetry...</span>
+        <div class="dual-device-badges" style="display: flex; gap: 8px;">
+          <div id="uno-conn-badge" class="badge-status connecting" title="Module A: Arduino Uno (Proximity & Lid)">
+            <span class="status-indicator-dot"></span>
+            <span id="uno-conn-text">Uno: Offline</span>
+          </div>
+          <div id="esp-conn-badge" class="badge-status connecting" title="Module B: ESP32 (Moisture & Load Cell)">
+            <span class="status-indicator-dot"></span>
+            <span id="esp-conn-text">ESP32: Offline</span>
+          </div>
         </div>
-        <button id="btn-webserial" class="btn-header" title="Connect directly to Arduino Uno via USB Serial">
+        <button id="btn-webserial" class="btn-header" title="Connect directly to Arduino Uno via Web Serial">
           <svg width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
             <path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
           </svg>
-          <span id="btn-webserial-text">Direct USB (Web Serial)</span>
+          <span id="btn-webserial-text">Direct USB Serial</span>
         </button>
       </div>
     </header>
@@ -56,8 +62,8 @@
         <span id="mode-banner-title">LIVE HARDWARE MODE</span>
       </div>
       <div class="mode-banner-details" id="mode-banner-details">
-        <span id="mode-banner-desc">Receiving physical telemetry from Arduino Uno R3 via Serial Gateway or Web Serial.</span>
-        <span id="mode-banner-subdesc" class="mode-banner-subdesc">Hardware disconnected — connect the Arduino or switch to Simulation Mode.</span>
+        <span id="mode-banner-desc">Receiving multi-microcontroller telemetry from Arduino Uno (Module A) & ESP32 (Module B).</span>
+        <span id="mode-banner-subdesc" class="mode-banner-subdesc">Awaiting device connections or switch to Simulation Mode.</span>
       </div>
       <div class="mode-banner-meta" id="mode-banner-meta">
         <span class="meta-item-label">Data Provenance:</span>
@@ -68,16 +74,18 @@
     <!-- Simulation Controls Panel (Visible strictly when Simulation Mode is active) -->
     <div id="simulation-controls" class="sim-controls-card" style="display: none;" role="region" aria-label="Simulation Controls">
       <div class="sim-controls-header">
-        <span class="sim-controls-title">⚙ SYNTHETIC TELEMETRY GENERATOR CONTROLS</span>
+        <span class="sim-controls-title">⚙ MULTI-DEVICE SYNTHETIC TELEMETRY GENERATOR</span>
         <span class="sim-isolation-tag">PROVENANCE: SIMULATION • HARDWARE PROTECTED</span>
       </div>
       <div class="sim-controls-body">
         <div class="sim-control-item">
           <label for="sim-scenario-select">Simulation Scenario:</label>
           <select id="sim-scenario-select" class="form-select sim-select">
-            <option value="SCENARIO_A">Scenario A: Normal Operation (Nominal Cycles, Proximity Events, Balanced Readings)</option>
-            <option value="SCENARIO_B">Scenario B: Bin Filling (Progressive Mass & Moisture Rise)</option>
-            <option value="SCENARIO_C">Scenario C: Hardware Unavailable / Offline Fault</option>
+            <option value="SCENARIO_A">Scenario A: Both Devices Online (Nominal Operation)</option>
+            <option value="SCENARIO_B">Scenario B: Bin Filling (Active Mass & Moisture Accumulation)</option>
+            <option value="SCENARIO_C">Scenario C: Module A (Uno) Online, Module B (ESP32) Disconnected</option>
+            <option value="SCENARIO_D">Scenario D: Module B (ESP32) Online, Module A (Uno) Disconnected</option>
+            <option value="SCENARIO_E">Scenario E: Sensor Faults & Telemetry Interruption</option>
           </select>
         </div>
 
@@ -111,20 +119,20 @@
     <section class="health-strip">
       <div class="health-metrics">
         <div class="health-item">
-          <span class="health-label">Device Identifier</span>
-          <span class="health-val" id="val-device-id">—</span>
+          <span class="health-label">Arduino Uno (Module A)</span>
+          <span class="health-val" id="val-uno-status">DISCONNECTED</span>
         </div>
         <div class="health-item">
-          <span class="health-label">Controller</span>
-          <span class="health-val">Arduino Uno (5V)</span>
+          <span class="health-label">ESP32 Hub (Module B)</span>
+          <span class="health-val" id="val-esp-status">DISCONNECTED</span>
         </div>
         <div class="health-item">
-          <span class="health-label">Last Packet Received</span>
-          <span class="health-val" id="val-last-received">Never</span>
+          <span class="health-label">Uno Last Packet</span>
+          <span class="health-val" id="val-uno-last">Never</span>
         </div>
         <div class="health-item">
-          <span class="health-label">Device Uptime</span>
-          <span class="health-val" id="val-uptime">0s</span>
+          <span class="health-label">ESP32 Last Packet</span>
+          <span class="health-val" id="val-esp-last">Never</span>
         </div>
         <div class="health-item">
           <span class="health-label">Active Faults</span>
@@ -132,7 +140,7 @@
         </div>
       </div>
       <div class="hardware-spec-badge">
-        ATmega328P • 115200 Baud • JSON Lines
+        Dual Controller • Uno (D4-D6) • ESP32 (ADC1 34, 16/4)
       </div>
     </section>
 
@@ -141,17 +149,17 @@
       <div class="section-title">
         <span id="sensor-section-title">Live Sensor Telemetry</span>
         <span id="sensor-section-subtitle" style="font-size: 0.8rem; font-weight: normal; color: var(--text-muted);">
-          Actual Physical Readings Only
+          Independent Microcontroller Streams
         </span>
       </div>
 
       <div class="sensor-grid">
-        <!-- 1. Capacitive Moisture Sensor -->
+        <!-- 1. Capacitive Moisture Sensor (Module B: ESP32) -->
         <article class="sensor-card" id="card-moisture">
           <div class="card-header">
             <div class="sensor-title-group">
               <h3>Capacitive Soil Moisture</h3>
-              <span class="sensor-pin-label">Analog In: Pin A0</span>
+              <span class="sensor-pin-label">Module B: ESP32 • ADC1 Pin 34</span>
             </div>
             <span class="card-pill uncalibrated" id="moist-status-pill">AWAITING</span>
           </div>
@@ -160,11 +168,11 @@
               <span class="metric-value" id="moist-val">—</span>
               <span class="metric-unit" id="moist-unit">%</span>
             </div>
-            <p class="metric-subtext" id="moist-subtext">Awaiting valid sensor reading</p>
+            <p class="metric-subtext" id="moist-subtext">Awaiting ESP32 sensor stream</p>
           </div>
           <div class="card-meta-list">
             <div class="meta-row">
-              <span class="meta-label">Raw 10-Bit ADC</span>
+              <span class="meta-label">Raw 12-Bit ADC</span>
               <span class="meta-val" id="moist-raw-adc">—</span>
             </div>
             <div class="meta-row">
@@ -173,17 +181,17 @@
             </div>
             <div class="meta-row">
               <span class="meta-label">Valid Range</span>
-              <span class="meta-val">50 – 980 ADC</span>
+              <span class="meta-val">200 – 3950 ADC</span>
             </div>
           </div>
         </article>
 
-        <!-- 2. Load Cell & HX711 -->
+        <!-- 2. Load Cell & HX711 (Module B: ESP32) -->
         <article class="sensor-card" id="card-weight">
           <div class="card-header">
             <div class="sensor-title-group">
               <h3>Load Cell + HX711</h3>
-              <span class="sensor-pin-label">Digital: D2 (DOUT), D3 (SCK)</span>
+              <span class="sensor-pin-label">Module B: ESP32 • GPIO 16 (DOUT), 4 (SCK)</span>
             </div>
             <span class="card-pill uncalibrated" id="weight-status-pill">AWAITING</span>
           </div>
@@ -192,7 +200,7 @@
               <span class="metric-value" id="weight-val">—</span>
               <span class="metric-unit">g</span>
             </div>
-            <p class="metric-subtext" id="weight-subtext">Awaiting valid sensor reading</p>
+            <p class="metric-subtext" id="weight-subtext">Awaiting ESP32 sensor stream</p>
           </div>
           <div class="card-meta-list">
             <div class="meta-row">
@@ -210,12 +218,12 @@
           </div>
         </article>
 
-        <!-- 3. Ultrasonic Proximity Sensor -->
+        <!-- 3. Ultrasonic Proximity Sensor (Module A: Arduino Uno) -->
         <article class="sensor-card" id="card-proximity">
           <div class="card-header">
             <div class="sensor-title-group">
               <h3>Ultrasonic Proximity</h3>
-              <span class="sensor-pin-label">Digital: D4 (TRIG), D5 (ECHO)</span>
+              <span class="sensor-pin-label">Module A: Arduino Uno • D4 (TRIG), D5 (ECHO)</span>
             </div>
             <span class="card-pill uncalibrated" id="prox-status-pill">AWAITING</span>
           </div>
@@ -242,12 +250,12 @@
           </div>
         </article>
 
-        <!-- 4. Automatic Lid Actuator -->
+        <!-- 4. Automatic Lid Actuator (Module A: Arduino Uno) -->
         <article class="sensor-card" id="card-lid">
           <div class="card-header">
             <div class="sensor-title-group">
               <h3>Lid Actuator Status</h3>
-              <span class="sensor-pin-label">PWM Output: Pin D6</span>
+              <span class="sensor-pin-label">Module A: Arduino Uno • PWM Pin D6</span>
             </div>
             <span class="card-pill uncalibrated" id="lid-status-pill">CLOSED</span>
           </div>
@@ -259,8 +267,8 @@
           </div>
           <div class="card-meta-list">
             <div class="meta-row">
-              <span class="meta-label">Physical Feedback</span>
-              <span class="meta-val" style="color: var(--accent-amber);">Commanded Only</span>
+              <span class="meta-label">Autonomous Safety</span>
+              <span class="meta-val" style="color: var(--accent-forest); font-weight: 600;">Hardware-Safe Loop</span>
             </div>
             <div class="meta-row">
               <span class="meta-label">Hold Open Duration</span>

@@ -68,7 +68,8 @@ void sensors_init() {
     lidState.commandState = LID_CLOSED;
     lidState.stateChangeTimestampMs = millis();
 
-    // 5. HX711 Load Cell Initialization
+#ifdef ENABLE_UNO_LEGACY_SENSORS
+    // Optional legacy: HX711 Load Cell Initialization if wired to Uno
     hx711.begin(PIN_HX711_DOUT, PIN_HX711_SCK);
     hx711.set_scale(weightCalibrationFactor);
 
@@ -77,6 +78,7 @@ void sensors_init() {
     } else {
         digitalWrite(PIN_LED_FAULT, HIGH);
     }
+#endif
 }
 
 // ============================================================================
@@ -314,29 +316,40 @@ SystemTelemetry sensors_captureTelemetry() {
 
     telem.sequenceNumber = telemetrySequenceCounter;
     telem.uptimeSeconds  = millis() / 1000;
+#ifdef ENABLE_UNO_LEGACY_SENSORS
     telem.moisture       = sensors_readMoisture();
     telem.weight         = sensors_readWeight();
+#else
+    telem.moisture.status = SENSOR_OK;
+    telem.moisture.isCalibrated = false;
+    telem.moisture.rawValue = 0;
+    telem.moisture.calibratedPct = 0.0f;
+
+    telem.weight.status = SENSOR_OK;
+    telem.weight.isCalibrated = false;
+    telem.weight.rawValue = 0;
+    telem.weight.weightGrams = 0.0f;
+#endif
     telem.proximity      = sensors_readProximity();
     telem.lid            = sensors_getLidState();
     telem.lastRecordedCategory = CATEGORY_UNCLASSIFIED;
 
     // Calculate fault bitmask
     telem.faultBitmask = FAULT_NONE;
+#ifdef ENABLE_UNO_LEGACY_SENSORS
     if (telem.moisture.status == SENSOR_DISCONNECTED) {
         telem.faultBitmask |= FAULT_MOISTURE_OFFLINE;
     }
     if (telem.weight.status == SENSOR_TIMEOUT) {
         telem.faultBitmask |= FAULT_HX711_TIMEOUT;
     }
+#endif
     if (telem.proximity.status == SENSOR_TIMEOUT) {
         telem.faultBitmask |= FAULT_ULTRASONIC_TIMEOUT;
     }
-    if (!telem.moisture.isCalibrated || !telem.weight.isCalibrated) {
-        telem.faultBitmask |= FAULT_CALIBRATION_REQUIRED;
-    }
 
     // Drive fault LED
-    if (telem.faultBitmask & (FAULT_MOISTURE_OFFLINE | FAULT_HX711_TIMEOUT)) {
+    if (telem.faultBitmask & FAULT_ULTRASONIC_TIMEOUT) {
         digitalWrite(PIN_LED_FAULT, HIGH);
     } else {
         digitalWrite(PIN_LED_FAULT, LOW);
