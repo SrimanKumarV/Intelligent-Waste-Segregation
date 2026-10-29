@@ -1,12 +1,11 @@
 # Multi-Device Serial Gateway — Intelligent Waste Segregation
 # Bridges independent USB COM ports for Arduino Uno and ESP32 to the Backend REST API
-# Coordinates Cross-Device Lid Synchronization from Uno to ESP32
-# Supports both Standard JSON Lines Protocol and Legacy / Custom Human-Readable Serial Formats
+# Single-Loop High-Reliability Architecture with Auto-Reconnection & Dual Protocol Support
 
 param (
     [string]$UnoPort = "",
     [string]$Esp32Port = "",
-    [string]$ComPort = "",  # Backward compatibility single port
+    [string]$ComPort = "",
     [int]$BaudRate = 115200,
     [int]$UnoBaud = 0,
     [int]$Esp32Baud = 0,
@@ -17,10 +16,7 @@ Write-Host "==========================================================" -Foregro
 Write-Host "  Dual-Device Serial Gateway & Multi-Protocol Bridge     " -ForegroundColor Cyan
 Write-Host "==========================================================" -ForegroundColor Cyan
 
-# Load System.IO.Ports assembly
 [System.Reflection.Assembly]::LoadWithPartialName("System.IO.Ports") | Out-Null
-$availablePorts = [System.IO.Ports.SerialPort]::GetPortNames()
-Write-Host "Detected System COM Ports: $($availablePorts -join ', ')" -ForegroundColor Gray
 
 # Auto-detect ports if unspecified
 if (-not $UnoPort -or -not $Esp32Port) {
@@ -32,23 +28,24 @@ if (-not $UnoPort -or -not $Esp32Port) {
                 $p = $matches[1]
                 if (-not $UnoPort -and ($name -like '*CH340*' -or $name -like '*Arduino*' -or $dev.InstanceId -like '*VID_1A86&PID_7523*')) {
                     $UnoPort = $p
-                    Write-Host "Auto-detected Arduino Uno on $UnoPort ($name)" -ForegroundColor Green
                 }
                 elseif (-not $Esp32Port -and ($name -like '*CH9102*' -or $name -like '*CP210*' -or $name -like '*ESP32*' -or $dev.InstanceId -like '*VID_1A86&PID_55D4*')) {
                     $Esp32Port = $p
-                    Write-Host "Auto-detected ESP32 on $Esp32Port ($name)" -ForegroundColor Green
                 }
             }
         }
     } catch {}
 }
 
+$sysPorts = [System.IO.Ports.SerialPort]::GetPortNames()
+if (-not $UnoPort -and $sysPorts -contains "COM7") { $UnoPort = "COM7" }
+if (-not $Esp32Port -and $sysPorts -contains "COM3") { $Esp32Port = "COM3" }
+
 if ($ComPort -and -not $UnoPort -and -not $Esp32Port) {
     $UnoPort = $ComPort
 }
 
-# Default Baud rates: Uno typically 9600 for simple sketches or 115200 for JSON firmware.
-# ESP32 defaults to 115200.
+# Determine default baud rates
 if ($UnoBaud -eq 0) {
     $UnoBaud = if ($BaudRate -ne 115200) { $BaudRate } else { 9600 }
 }
@@ -62,80 +59,82 @@ Write-Host " Backend Target URL:        $BackendUrl" -ForegroundColor Yellow
 Write-Host " Press Ctrl+C to terminate gateway" -ForegroundColor Gray
 Write-Host "==========================================================" -ForegroundColor Cyan
 
-# Shared state file for cross-process lid synchronization between threads
-$syncStateFile = Join-Path $PSScriptRoot "..\data\gateway_sync.json"
+# Function to safely create and open a SerialPort
+function Open-PortSafely ($pName, $baud) {
+    if ([string]::IsNullOrWhiteSpace($pName)) { return $null }
+    try {
+        $sp = New-Object System.IO.Ports.SerialPort $pName, $baud, "None", 8, "One"
+        $sp.DtrEnable = $true
+        $sp.RtsEnable = $true
+        $sp.ReadTimeout = 500
+        $sp.WriteTimeout = 500
+        $sp.Open()
+        Write-Host "Connected on $pName ($baud baud)" -ForegroundColor Green
+        return $sp
+    } catch {
+        Write-Host "Waiting for $pName ($($_.Exception.Message))" -ForegroundColor DarkGray
+        return $null
+    }
+}
 
-function Start-SerialReaderThread ($portName, $deviceType, $endpointUrl, $baud, $peerPort) {
-    if ([string]::IsNullOrWhiteSpace($portName)) { return $null }
+$spUno = $null
+$spEsp = $null
 
-    $scriptBlock = {
-        param($pName, $dType, $url, $baudRate, $syncFile)
+# Uno Telemetry State
+$unoDist = 55.0
+$unoProx = $false
+$unoLid = "CLOSED"
+$lastUnoPost = [DateTime]::MinValue
+$unoSeq = 0
+$unoCount = 0
 
-        [System.Reflection.Assembly]::LoadWithPartialName("System.IO.Ports") | Out-Null
-        $sp = $null
-        try {
-            $sp = New-Object System.IO.Ports.SerialPort $pName, $baudRate, "None", 8, "One"
-            $sp.DtrEnable = $true
-            $sp.RtsEnable = $true
-            $sp.ReadTimeout = 2000
-            $sp.WriteTimeout = 2000
-            $sp.Open()
-            Write-Host "[$dType] Connected on $pName ($baudRate baud). Forwarding to $url..." -ForegroundColor Green
+# ESP32 Telemetry State
+$espC1Wt = 0.0; $espC1Moist = 0.0
+$espC2Wt = 0.0; $espC2Moist = 0.0
+$espC3Wt = 0.0; $espC3Moist = 0.0
+$lastEspPost = [DateTime]::MinValue
+$espSeq = 0
+$espCount = 0
 
-            $count = 0
-            $lastLidState = ""
-            $lastSyncChecked = [DateTime]::MinValue
-            $startTime = [DateTime]::UtcNow
-            $seq = 0
+$startTime = [DateTime]::UtcNow
+$lastReconnectAttempt = [DateTime]::MinValue
 
-            # Uno tracking state
-            $unoDist = 55.0
-            $unoProx = $false
-            $unoLid = "CLOSED"
-            $lastUnoPost = [DateTime]::MinValue
+try {
+    while ($true) {
+        $now = [DateTime]::UtcNow
 
-            # ESP32 tracking state
-            $espC1Wt = 0.0; $espC1Moist = 0.0
-            $espC2Wt = 0.0; $espC2Moist = 0.0
-            $espC3Wt = 0.0; $espC3Moist = 0.0
-            $lastEspPost = [DateTime]::MinValue
+        # Auto-reconnection logic every 3 seconds
+        if (($now - $lastReconnectAttempt).TotalSeconds -ge 3) {
+            $lastReconnectAttempt = $now
+            if ($UnoPort -and (-not $spUno -or -not $spUno.IsOpen)) {
+                if ($spUno) { try { $spUno.Dispose() } catch {} }
+                $spUno = Open-PortSafely $UnoPort $UnoBaud
+            }
+            if ($Esp32Port -and (-not $spEsp -or -not $spEsp.IsOpen)) {
+                if ($spEsp) { try { $spEsp.Dispose() } catch {} }
+                $spEsp = Open-PortSafely $Esp32Port $Esp32Baud
+            }
+        }
 
-            while ($sp.IsOpen) {
-                try {
-                    $line = $sp.ReadLine()
+        # ----------------------------------------------------
+        # 1. READ FROM UNO (MODULE A)
+        # ----------------------------------------------------
+        if ($spUno -and $spUno.IsOpen) {
+            try {
+                while ($spUno.BytesToRead -gt 0) {
+                    $line = $spUno.ReadLine()
                     if ([string]::IsNullOrWhiteSpace($line)) { continue }
                     $trimmed = $line.Trim()
-                    $now = [DateTime]::UtcNow
 
                     if ($trimmed.StartsWith("{") -and $trimmed.EndsWith("}")) {
-                        # Standard JSON Line Telemetry
-                        $targetUrl = "$url/$dType"
+                        # Standard JSON format
                         try {
-                            $res = Invoke-RestMethod -Uri $targetUrl -Method Post -Body $trimmed -ContentType "application/json" -TimeoutSec 2 -ErrorAction Stop
-                            $count++
-                            Write-Host "[$dType #$count] Forwarded JSON packet on $pName" -ForegroundColor Green
-
-                            # If Module A (Uno) reports a lid transition, write to sync file
-                            if ($dType -eq "uno") {
-                                try {
-                                    $obj = $trimmed | ConvertFrom-Json
-                                    if ($obj.lid_cmd -and $obj.lid_cmd -ne $lastLidState) {
-                                        $lastLidState = $obj.lid_cmd
-                                        $syncData = @{
-                                            lid_cmd = $obj.lid_cmd
-                                            seq = $obj.seq
-                                            timestamp = $now.ToString("o")
-                                        } | ConvertTo-Json -Compress
-                                        [System.IO.File]::WriteAllText($syncFile, $syncData)
-                                    }
-                                } catch {}
-                            }
-                        } catch {
-                            Invoke-RestMethod -Uri $url -Method Post -Body $trimmed -ContentType "application/json" -TimeoutSec 2 -ErrorAction SilentlyContinue | Out-Null
-                        }
-                    }
-                    elseif ($dType -eq "uno") {
-                        # Universal Parser for Uno text output
+                            Invoke-RestMethod -Uri "$BackendUrl/uno" -Method Post -Body $trimmed -ContentType "application/json" -TimeoutSec 1 -ErrorAction SilentlyContinue | Out-Null
+                            $unoCount++
+                            Write-Host "[Uno #$unoCount] Forwarded JSON packet" -ForegroundColor Green
+                        } catch {}
+                    } else {
+                        # Plain text parser for distance and lid
                         $stateChanged = $false
                         if ($trimmed -match 'Distance:\s*(\d+(\.\d+)?)') {
                             $unoDist = [double]$matches[1]
@@ -150,19 +149,29 @@ function Start-SerialReaderThread ($portName, $deviceType, $endpointUrl, $baud, 
                             $stateChanged = $true
                         }
                         if ($trimmed -match 'Lid\s*(OPEN|CLOSED)') {
-                            $unoLid = $matches[1].ToUpper()
+                            $newLid = $matches[1].ToUpper()
+                            if ($newLid -ne $unoLid) {
+                                $unoLid = $newLid
+                                # Sync lid state to ESP32 immediately if connected
+                                if ($spEsp -and $spEsp.IsOpen) {
+                                    try {
+                                        $syncFrame = "{""cmd"":""sync_lid"",""state"":""$unoLid"",""seq"":$unoSeq}`n"
+                                        $spEsp.Write($syncFrame)
+                                    } catch {}
+                                }
+                            }
                             $stateChanged = $true
                         }
 
                         if ($stateChanged -and (($now - $lastUnoPost).TotalMilliseconds -ge 800)) {
                             $lastUnoPost = $now
-                            $seq++
-                            $uptime = [int]($now - $startTime).TotalSeconds
+                            $unoSeq++
+                            $up = [int]($now - $startTime).TotalSeconds
                             $unoJson = @{
                                 v = 1
                                 dev = "UNO-WS01"
-                                seq = $seq
-                                up = $uptime
+                                seq = $unoSeq
+                                up = $up
                                 dist_cm = $unoDist
                                 prox = $unoProx
                                 lid_cmd = $unoLid
@@ -170,24 +179,39 @@ function Start-SerialReaderThread ($portName, $deviceType, $endpointUrl, $baud, 
                             } | ConvertTo-Json -Compress
 
                             try {
-                                Invoke-RestMethod -Uri "$url/uno" -Method Post -Body $unoJson -ContentType "application/json" -TimeoutSec 2 -ErrorAction SilentlyContinue | Out-Null
-                                $count++
-                                Write-Host "[$dType #$count] Forwarded Uno (Dist: $unoDist cm, Lid: $unoLid, Prox: $unoProx)" -ForegroundColor Green
+                                Invoke-RestMethod -Uri "$BackendUrl/uno" -Method Post -Body $unoJson -ContentType "application/json" -TimeoutSec 1 -ErrorAction SilentlyContinue | Out-Null
+                                $unoCount++
+                                Write-Host "[Uno #$unoCount] Forwarded Uno (Dist: $unoDist cm, Lid: $unoLid, Prox: $unoProx)" -ForegroundColor Green
                             } catch {}
-
-                            if ($unoLid -ne $lastLidState) {
-                                $lastLidState = $unoLid
-                                $syncData = @{
-                                    lid_cmd = $unoLid
-                                    seq = $seq
-                                    timestamp = $now.ToString("o")
-                                } | ConvertTo-Json -Compress
-                                [System.IO.File]::WriteAllText($syncFile, $syncData)
-                            }
                         }
                     }
-                    elseif ($dType -eq "esp32") {
-                        # Universal Parser for ESP32 text output
+                }
+            } catch [System.TimeoutException] {
+                # Normal read timeout
+            } catch {
+                Write-Host "Uno read notice: $($_.Exception.Message)" -ForegroundColor DarkGray
+            }
+        }
+
+        # ----------------------------------------------------
+        # 2. READ FROM ESP32 (MODULE B)
+        # ----------------------------------------------------
+        if ($spEsp -and $spEsp.IsOpen) {
+            try {
+                while ($spEsp.BytesToRead -gt 0) {
+                    $line = $spEsp.ReadLine()
+                    if ([string]::IsNullOrWhiteSpace($line)) { continue }
+                    $trimmed = $line.Trim()
+
+                    if ($trimmed.StartsWith("{") -and $trimmed.EndsWith("}")) {
+                        # Standard JSON format
+                        try {
+                            Invoke-RestMethod -Uri "$BackendUrl/esp32" -Method Post -Body $trimmed -ContentType "application/json" -TimeoutSec 1 -ErrorAction SilentlyContinue | Out-Null
+                            $espCount++
+                            Write-Host "[ESP32 #$espCount] Forwarded JSON packet" -ForegroundColor Green
+                        } catch {}
+                    } else {
+                        # Plain text parser for C1, C2, C3
                         if ($trimmed -match 'C1:\s*([\d\.\-]+)\s*g\s*\|\s*moist\s*([\d\.\-]+)%') {
                             $espC1Wt = [double]$matches[1]
                             $espC1Moist = [double]$matches[2]
@@ -203,13 +227,13 @@ function Start-SerialReaderThread ($portName, $deviceType, $endpointUrl, $baud, 
 
                         if ($trimmed -match '^-+$' -or (($now - $lastEspPost).TotalMilliseconds -ge 1000)) {
                             $lastEspPost = $now
-                            $seq++
-                            $uptime = [int]($now - $startTime).TotalSeconds
+                            $espSeq++
+                            $up = [int]($now - $startTime).TotalSeconds
                             $espJson = @{
                                 v = 1
                                 dev = "ESP32-WS01"
-                                seq = $seq
-                                up = $uptime
+                                seq = $espSeq
+                                up = $up
                                 c1_pct = $espC1Moist
                                 c1_raw = 500
                                 c1_ok = $true
@@ -236,78 +260,25 @@ function Start-SerialReaderThread ($portName, $deviceType, $endpointUrl, $baud, 
                             } | ConvertTo-Json -Compress
 
                             try {
-                                Invoke-RestMethod -Uri "$url/esp32" -Method Post -Body $espJson -ContentType "application/json" -TimeoutSec 2 -ErrorAction SilentlyContinue | Out-Null
-                                $count++
-                                Write-Host "[$dType #$count] Forwarded ESP32 (C1: $espC1Wt g / $espC1Moist%, C2: $espC2Wt g / $espC2Moist%)" -ForegroundColor Green
+                                Invoke-RestMethod -Uri "$BackendUrl/esp32" -Method Post -Body $espJson -ContentType "application/json" -TimeoutSec 1 -ErrorAction SilentlyContinue | Out-Null
+                                $espCount++
+                                Write-Host "[ESP32 #$espCount] Forwarded ESP32 (C1: $espC1Wt g / $espC1Moist%, C2: $espC2Wt g / $espC2Moist%)" -ForegroundColor Green
                             } catch {}
                         }
                     }
-
-                    # Cross-device lid sync relay to ESP32
-                    if ($dType -eq "esp32") {
-                        if (([DateTime]::UtcNow - $lastSyncChecked).TotalMilliseconds -ge 1000) {
-                            $lastSyncChecked = [DateTime]::UtcNow
-                            if ([System.IO.File]::Exists($syncFile)) {
-                                try {
-                                    $content = [System.IO.File]::ReadAllText($syncFile)
-                                    if (-not [string]::IsNullOrWhiteSpace($content)) {
-                                        $syncObj = $content | ConvertFrom-Json
-                                        $syncFrame = "{""cmd"":""sync_lid"",""state"":""$($syncObj.lid_cmd)"",""seq"":$($syncObj.seq)}`n"
-                                        $sp.Write($syncFrame)
-                                    }
-                                } catch {}
-                            }
-                        }
-                    }
-
-                } catch [System.TimeoutException] {
-                    # Normal read timeout; keep loop alive
-                } catch {
-                    Write-Host "[$dType READ ERROR] $($_.Exception.Message)" -ForegroundColor Red
-                    Start-Sleep -Milliseconds 500
                 }
+            } catch [System.TimeoutException] {
+                # Normal read timeout
+            } catch {
+                Write-Host "ESP32 read notice: $($_.Exception.Message)" -ForegroundColor DarkGray
             }
-        } catch {
-            Write-Host "[$dType ERROR] Failed to connect on ${pName}: $($_.Exception.Message)" -ForegroundColor Red
-        } finally {
-            if ($sp -and $sp.IsOpen) { $sp.Close() }
         }
-    }
 
-    $ps = [PowerShell]::Create().AddScript($scriptBlock).AddArgument($portName).AddArgument($deviceType).AddArgument($endpointUrl).AddArgument($baud).AddArgument($syncStateFile)
-    $handle = $ps.BeginInvoke()
-    return @{ PowerShell = $ps; Handle = $handle; Port = $portName; Device = $deviceType }
-}
-
-$readers = @()
-
-if ($UnoPort) {
-    Write-Host "Starting Uno reader on $UnoPort ($UnoBaud baud)..." -ForegroundColor Cyan
-    $readers += Start-SerialReaderThread $UnoPort "uno" $BackendUrl $UnoBaud $Esp32Port
-}
-
-if ($Esp32Port) {
-    Write-Host "Starting ESP32 reader on $Esp32Port ($Esp32Baud baud)..." -ForegroundColor Cyan
-    $readers += Start-SerialReaderThread $Esp32Port "esp32" $BackendUrl $Esp32Baud $UnoPort
-}
-
-if ($readers.Count -eq 0) {
-    Write-Host "`n[NOTICE] No COM ports specified or auto-detected. Run with:" -ForegroundColor Yellow
-    Write-Host "  .\\gateway\\serial_gateway.ps1 -UnoPort COM7 -Esp32Port COM3" -ForegroundColor White
-    exit 0
-}
-
-try {
-    while ($true) {
-        Start-Sleep -Seconds 1
+        Start-Sleep -Milliseconds 30
     }
 } finally {
-    Write-Host "`nStopping readers..." -ForegroundColor Gray
-    foreach ($r in $readers) {
-        if ($r.PowerShell) {
-            $r.PowerShell.Stop()
-            $r.PowerShell.Dispose()
-        }
-    }
+    Write-Host "`nStopping serial connections..." -ForegroundColor Gray
+    if ($spUno -and $spUno.IsOpen) { $spUno.Close(); $spUno.Dispose() }
+    if ($spEsp -and $spEsp.IsOpen) { $spEsp.Close(); $spEsp.Dispose() }
     Write-Host "Gateway stopped." -ForegroundColor Gray
 }
